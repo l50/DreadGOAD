@@ -87,6 +87,7 @@ Create a randomized copy of any lab with unique names but identical attack paths
 - [CLI reference](docs/cli.md) -- command index plus Viper-based config, environment variables, and per-environment settings
 - [Domains and users](docs/domains-and-users.md) -- full network topology, credentials, and attack paths
 - [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- all 50+ vulnerabilities with exploitation techniques
+- [Domain compromise paths](docs/domain-compromise-paths.md) -- every provisioned way to reach Domain Admin / golden ticket (29 distinct paths, ~133 permutations)
 - [Validation guide](docs/validation.md) -- automated vulnerability validation (with live dashboard and polling)
 - [Scoreboard guide](docs/scoreboard.md) -- live engagement status board (answer key + agent report verification)
 - [Provider guides](docs/mkdocs/docs/providers/) -- VirtualBox, VMware, Proxmox, AWS, Azure, Ludus
