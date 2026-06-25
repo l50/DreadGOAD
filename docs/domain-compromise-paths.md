@@ -99,7 +99,7 @@ Essos DA via the gMSA→drogon nested-group route and via ADCS. Nesting that mak
 | E11 | ESC15 (EKUwu) | ADCS ESC15 (v1 enrollee-supplies-subject) | any essos Domain User | add client-auth app-policy → cert as DA | `vulns_adcs_esc15` grants Domain Users Enroll on "Web Server" |
 | E12 | ESC8 on ESSOS-CA | ADCS ESC8 (web-enroll relay) | any domain creds + coerce meereen | DC cert → DA | CA on srv03 (`inventory:88-90`); web enroll default true |
 
-**E1 routes to braavos local admin** (→ SYSTEM → read gmsaDragon$ → control drogon): khal.drogo direct local admin (`:213`) and MSSQL sysadmin (`:226-227`); jorah.mormont LAPS reader (`:254-257`); `DragonsFriends → GenericWrite braavos$` → RBCD (`:320`).
+**E1 routes to braavos local admin** (→ SYSTEM → read gmsaDragon$ → control drogon): khal.drogo direct local admin (`:213`) and MSSQL sysadmin (`:226-227`); jorah.mormont LAPS reader (`:254-257`); `DragonsFriends → GenericWrite braavos$`→ RBCD (`:320`).
 
 ### Cross-domain / trust hops — 4 additional paths
 
