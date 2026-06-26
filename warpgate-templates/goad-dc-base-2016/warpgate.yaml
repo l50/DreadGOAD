@@ -41,7 +41,7 @@ targets:
     region: "${aws_region}"
     instance_type: "${instance_type}"
     ami_name: "goad-dc-base-2016-{{timestamp}}"
-    volume_size: 100
+    volume_size: 50
     ami_tags:
       Name: goad-dc-base-2016
       Lab: GOAD
