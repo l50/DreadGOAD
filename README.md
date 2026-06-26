@@ -54,7 +54,17 @@ cd DreadGOAD
 # Install Ansible dependencies
 ansible-galaxy collection install -r ansible/requirements.yml
 
-# Build the CLI
+# Install the CLI to GOPATH/bin (via go install)
+task install
+```
+
+`task install` runs `go install` from the `cli/` module and places the
+`dreadgoad` binary in `$(go env GOPATH)/bin`. Make sure that directory is on
+your `PATH` so you can run `dreadgoad` from anywhere.
+
+To build a local binary without installing it instead, use:
+
+```bash
 cd cli && go build -o dreadgoad . && cd ..
 ```
 
