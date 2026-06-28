@@ -1,7 +1,7 @@
 # DreadGOAD CLI Configuration
-env: dreadindex
-provider: azure  # Provider: aws, azure, proxmox, ludus
-region: centralus
+env: prod
+provider: aws  # Provider: aws, azure, proxmox, ludus
+region: us-east-1  # Override AWS region (default: from inventory)
 instance_profile: WarpgateImageBuilderInstanceProfile  # IAM instance profile for EC2 Image Builder
 debug: false
 max_retries: 3
