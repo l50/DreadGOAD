@@ -1,7 +1,7 @@
 # DreadGOAD CLI Configuration
-env: staging
+env: prod
 provider: aws  # Provider: aws, proxmox, ludus
-# region: us-west-2  # Override AWS region (default: from inventory)
+region: us-east-1  # Override AWS region (default: from inventory)
 instance_profile: WarpgateImageBuilderInstanceProfile  # IAM instance profile for EC2 Image Builder
 debug: false
 max_retries: 3
