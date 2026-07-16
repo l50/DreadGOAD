@@ -11,10 +11,30 @@
       $pending
   register: ssms_reboot_pending
 
+- name: Record pre-reboot boot time baseline (pre-SSMS install)
+  ansible.windows.win_powershell:
+    script: |
+      (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+  register: reboot_baseline
+  when: ssms_reboot_pending.output[0] | default(false) | bool
+
 - name: Reboot before SSMS install if pending
-  ansible.windows.win_reboot:
-    reboot_timeout: 600
-    msg: "Rebooting before SSMS installation due to pending reboot"
+  block:
+    - name: Trigger reboot via win_reboot
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 60
+        msg: "Rebooting before SSMS installation due to pending reboot"
+  rescue:
+    - name: Verify reboot completed (aws_ssm reconnect timeout is expected)
+      ansible.windows.win_powershell:
+        script: |
+          $current = (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+          if ($current -le {{ reboot_baseline.output[0] }}) { throw "host has not rebooted yet" }
+      register: reboot_verify
+      until: reboot_verify is succeeded
+      retries: 30
+      delay: 10
   when: ssms_reboot_pending.output[0] | default(false) | bool
 
 - name: Check SQL Server Manager Studio installer exists
@@ -28,27 +48,172 @@
     dest: c:\setup\mssql\SSMS_installer.exe
   when: not ssms_installer_file.stat.exists
 
-# Check for any SSMS version (18, 19, 20, 21)
+# SSMS 18-21 install to Program Files (x86); SSMS 22 is 64-bit under Program Files
+# and puts the IDE under a Release\ subdir. Point at the actual Ssms.exe so a
+# half-extracted install (which leaves the parent dirs behind) doesn't count as done.
 - name: Check SSMS installation already done
   ansible.windows.win_powershell:
     script: |
       $installed = $false
-      $paths = @(
-        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 18',
-        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 19',
-        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 20',
-        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 21'
+      $binaries = @(
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 18\Common7\IDE\Ssms.exe',
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 19\Common7\IDE\Ssms.exe',
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 20\Common7\IDE\Ssms.exe',
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 21\Common7\IDE\Ssms.exe',
+        'C:\Program Files\Microsoft SQL Server Management Studio 22\Release\Common7\IDE\SSMS.exe'
       )
-      foreach ($p in $paths) { if (Test-Path $p) { $installed = $true; break } }
+      foreach ($b in $binaries) { if (Test-Path $b) { $installed = $true; break } }
       $installed
   register: ssms_installation
 
-- name: Install SSMS
-  ansible.windows.win_command: c:\setup\mssql\SSMS_installer.exe /install /quiet /norestart
-  register: install_ssms
+- name: Ensure BITS is running (VS Installer download engine)
+  ansible.windows.win_service:
+    name: BITS
+    state: started
+    start_mode: auto
+  when: not (ssms_installation.output[0] | default(false) | bool)
+
+- name: Add Windows Defender exclusions for SSMS install paths
+  ansible.windows.win_powershell:
+    script: |
+      Add-MpPreference -ExclusionPath `
+        'C:\setup\mssql', `
+        'C:\Windows\Temp', `
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 18', `
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 19', `
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 20', `
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 21' `
+        -ErrorAction SilentlyContinue
+      Add-MpPreference -ExclusionProcess `
+        'SSMS_installer.exe','vs_setup_bootstrapper.exe','vs_installer.exe','setup.exe','msiexec.exe' `
+        -ErrorAction SilentlyContinue
+  when: not (ssms_installation.output[0] | default(false) | bool)
+
+- name: Kill any zombie SSMS installer processes from prior aborted runs
+  ansible.windows.win_powershell:
+    script: |
+      Get-Process SSMS_installer,vs_setup_bootstrapper,vs_installer,setup `
+        -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+      Remove-Item C:\setup\mssql\ssms_done.txt -ErrorAction SilentlyContinue
+  when: not (ssms_installation.output[0] | default(false) | bool)
+
+# A prior aborted SSMS 22 install can leave an unparseable
+# C:\ProgramData\Microsoft\VisualStudio\Packages\_Instances\<id>\state.groups.json;
+# the VS Installer bootstrapper then bails with exit 1 on every subsequent run.
+# Safe to purge these dirs when no VS product is installed (SSMS 18-21 are stand-alone
+# under Program Files (x86) and don't use Packages\_Instances).
+- name: Purge stale VS Installer instance state (prevents exit 1 from prior aborted SSMS install)
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $roots = @(
+        'C:\ProgramData\Microsoft\VisualStudio\Packages\_Instances',
+        'C:\ProgramData\Microsoft\VisualStudio\Packages\_bootstrapper'
+      )
+      foreach ($r in $roots) {
+        if (Test-Path $r) { Remove-Item $r -Recurse -Force -ErrorAction SilentlyContinue }
+      }
+  when: not (ssms_installation.output[0] | default(false) | bool)
+
+- name: Kick off SSMS installer in background (avoid aws_ssm session drop)
+  ansible.windows.win_powershell:
+    script: |
+      # VS Installer bootstrapper uses double-dash flags. Single-dash args (/install /quiet)
+      # are silently dropped and the bootstrapper falls back to interactive UI, which under
+      # aws_ssm's SYSTEM context has nowhere to render and hangs forever. --wait makes the
+      # bootstrapper block until the actual install completes so Start-Process -Wait matches.
+      # See https://learn.microsoft.com/en-us/ssms/install/command-line-parameters
+      $p = Start-Process -FilePath 'c:\setup\mssql\SSMS_installer.exe' `
+        -ArgumentList '--quiet','--wait','--norestart' -Wait -PassThru
+      $p.ExitCode | Out-File -Encoding ascii C:\setup\mssql\ssms_done.txt
+  async: 3600
+  poll: 0
+  register: ssms_install_async
+  when: not (ssms_installation.output[0] | default(false) | bool)
+
+- name: Wait for SSMS installer to finish (poll marker file)
+  ansible.windows.win_stat:
+    path: C:\setup\mssql\ssms_done.txt
+  register: ssms_done
+  until: ssms_done.stat.exists
+  retries: 180
+  delay: 20
+  when: not (ssms_installation.output[0] | default(false) | bool)
+
+- name: Verify SSMS installer exit code (0 = success, 3010 = reboot required)
+  block:
+    - name: Read SSMS installer exit code
+      ansible.windows.win_powershell:
+        script: |
+          $c = (Get-Content C:\setup\mssql\ssms_done.txt).Trim()
+          if ($c -ne '0' -and $c -ne '3010') { throw "SSMS installer exit code $c" }
+          $Ansible.Result = @{ exit_code = $c }
+      register: install_ssms
+  rescue:
+    - name: Gather SSMS install diagnostics (disk space + bootstrapper logs)
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $out = New-Object System.Collections.Generic.List[string]
+
+          $out.Add("=== SSMS installer exit code ===")
+          $out.Add((Get-Content C:\setup\mssql\ssms_done.txt -ErrorAction SilentlyContinue) -join "`n")
+
+          $out.Add("=== Disk space (C:) ===")
+          $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+          $out.Add(("free_gb={0:N2} size_gb={1:N2}" -f ($d.FreeSpace/1GB), ($d.Size/1GB)))
+
+          $tempRoots = @($env:TEMP, 'C:\Windows\Temp',
+                         'C:\Users\Administrator\AppData\Local\Temp') | Sort-Object -Unique
+          $out.Add("=== SSMS/VS bootstrapper logs found ===")
+          $logs = foreach ($r in $tempRoots) {
+            if (Test-Path $r) {
+              Get-ChildItem -Path $r -Filter 'dd_*SSMS*.log' -ErrorAction SilentlyContinue
+              Get-ChildItem -Path $r -Filter 'dd_bootstrapper_*.log' -ErrorAction SilentlyContinue
+              Get-ChildItem -Path $r -Filter 'dd_setup_*.log' -ErrorAction SilentlyContinue
+              Get-ChildItem -Path (Join-Path $r 'SSMSSetup') -Recurse -Filter '*.log' -ErrorAction SilentlyContinue
+            }
+          }
+          $logs = $logs | Sort-Object LastWriteTime -Descending | Select-Object -First 5
+          foreach ($f in $logs) {
+            $out.Add("--- $($f.FullName) (last 60 lines) ---")
+            $out.Add((Get-Content $f.FullName -Tail 60 -ErrorAction SilentlyContinue) -join "`n")
+          }
+          if (-not $logs) { $out.Add("(no SSMS bootstrapper logs found under $($tempRoots -join ', '))") }
+
+          $Ansible.Result = @{ diag = ($out -join "`n") }
+      register: ssms_diag
+
+    - name: Print SSMS install diagnostics
+      ansible.builtin.debug:
+        msg: "{{ ssms_diag.result.diag | default('(no diag captured)') }}"
+
+    - name: Re-raise SSMS installer failure
+      ansible.builtin.fail:
+        msg: "SSMS installer failed with exit code {{ install_ssms.error[0].exception.message | default('unknown') }} (diagnostics above)"
+  when: not (ssms_installation.output[0] | default(false) | bool)
+
+- name: Record pre-reboot boot time baseline (post-SSMS install)
+  ansible.windows.win_powershell:
+    script: |
+      (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+  register: reboot_baseline
   when: not (ssms_installation.output[0] | default(false) | bool)
 
 - name: Reboot after install
-  ansible.windows.win_reboot:
-    reboot_timeout: 600
+  block:
+    - name: Trigger reboot via win_reboot
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 60
+  rescue:
+    - name: Verify reboot completed (aws_ssm reconnect timeout is expected)
+      ansible.windows.win_powershell:
+        script: |
+          $current = (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+          if ($current -le {{ reboot_baseline.output[0] }}) { throw "host has not rebooted yet" }
+      register: reboot_verify
+      until: reboot_verify is succeeded
+      retries: 30
+      delay: 10
   when: not (ssms_installation.output[0] | default(false) | bool)
