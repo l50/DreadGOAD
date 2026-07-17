@@ -13,6 +13,9 @@ includes:
     vars:
       BINARY_NAME: '{{.BINARY_NAME}}'
       CMD_PATH: '{{.CMD_PATH}}'
+  ansible:
+    taskfile: "https://raw.githubusercontent.com/CowDogMoo/taskfile-templates/main/ansible/Taskfile.yaml"
+    dir: ./ansible
 
 tasks:
   default:
