@@ -16,12 +16,23 @@ Install SQL Server Management Studio
 ### main.yml
 
 - **Check if reboot is pending before SSMS install** (ansible.windows.win_powershell)
-- **Reboot before SSMS install if pending** (ansible.windows.win_reboot) - Conditional
+- **Record pre-reboot boot time baseline (pre-SSMS install)** (ansible.windows.win_powershell) - Conditional
+- **Reboot before SSMS install if pending** (block) - Conditional
+- **Trigger reboot via win_reboot** (ansible.windows.win_reboot)
 - **Check SQL Server Manager Studio installer exists** (ansible.windows.win_stat)
 - **Get the installer** (ansible.windows.win_get_url) - Conditional
 - **Check SSMS installation already done** (ansible.windows.win_powershell)
-- **Install SSMS** (ansible.windows.win_command) - Conditional
-- **Reboot after install** (ansible.windows.win_reboot) - Conditional
+- **Ensure BITS is running (VS Installer download engine)** (ansible.windows.win_service) - Conditional
+- **Add Windows Defender exclusions for SSMS install paths** (ansible.windows.win_powershell) - Conditional
+- **Kill any zombie SSMS installer processes from prior aborted runs** (ansible.windows.win_powershell) - Conditional
+- **Purge stale VS Installer instance state (prevents exit 1 from prior aborted SSMS install)** (ansible.windows.win_powershell) - Conditional
+- **Kick off SSMS installer in background (avoid aws_ssm session drop)** (ansible.windows.win_powershell) - Conditional
+- **Wait for SSMS installer to finish (poll marker file)** (ansible.windows.win_stat) - Conditional
+- **Verify SSMS installer exit code (0 = success, 3010 = reboot required)** (block) - Conditional
+- **Read SSMS installer exit code** (ansible.windows.win_powershell)
+- **Record pre-reboot boot time baseline (post-SSMS install)** (ansible.windows.win_powershell) - Conditional
+- **Reboot after install** (block) - Conditional
+- **Trigger reboot via win_reboot** (ansible.windows.win_reboot)
 
 ## Example Playbook
 
