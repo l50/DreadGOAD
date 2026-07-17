@@ -123,9 +123,18 @@
       # aws_ssm's SYSTEM context has nowhere to render and hangs forever. --wait makes the
       # bootstrapper block until the actual install completes so Start-Process -Wait matches.
       # See https://learn.microsoft.com/en-us/ssms/install/command-line-parameters
-      $p = Start-Process -FilePath 'c:\setup\mssql\SSMS_installer.exe' `
-        -ArgumentList '--quiet','--wait','--norestart' -Wait -PassThru
-      $p.ExitCode | Out-File -Encoding ascii C:\setup\mssql\ssms_done.txt
+      # Always write the marker, even when Start-Process itself throws (missing,
+      # corrupt, or access-denied exe). Without the catch the poll task below
+      # spins its whole window (180 x 20s = 1h) before failing; a sentinel value
+      # lets the exit-code verify task surface the launch failure immediately.
+      try {
+        $p = Start-Process -FilePath 'c:\setup\mssql\SSMS_installer.exe' `
+          -ArgumentList '--quiet','--wait','--norestart' -Wait -PassThru
+        $p.ExitCode | Out-File -Encoding ascii C:\setup\mssql\ssms_done.txt
+      } catch {
+        "launch-failed: $($_.Exception.Message)" | Out-File -Encoding ascii C:\setup\mssql\ssms_done.txt
+        throw
+      }
   async: 3600
   poll: 0
   register: ssms_install_async
@@ -145,9 +154,9 @@
     - name: Read SSMS installer exit code
       ansible.windows.win_powershell:
         script: |
-          $c = (Get-Content C:\setup\mssql\ssms_done.txt).Trim()
-          if ($c -ne '0' -and $c -ne '3010') { throw "SSMS installer exit code $c" }
+          $c = ((Get-Content C:\setup\mssql\ssms_done.txt -ErrorAction SilentlyContinue) -join "`n").Trim()
           $Ansible.Result = @{ exit_code = $c }
+          if ($c -ne '0' -and $c -ne '3010') { throw "SSMS installer exit code $c" }
       register: install_ssms
   rescue:
     - name: Gather SSMS install diagnostics (disk space + bootstrapper logs)
@@ -156,8 +165,9 @@
           $ProgressPreference = 'SilentlyContinue'
           $out = New-Object System.Collections.Generic.List[string]
 
+          $code = ((Get-Content C:\setup\mssql\ssms_done.txt -ErrorAction SilentlyContinue) -join "`n").Trim()
           $out.Add("=== SSMS installer exit code ===")
-          $out.Add((Get-Content C:\setup\mssql\ssms_done.txt -ErrorAction SilentlyContinue) -join "`n")
+          $out.Add($code)
 
           $out.Add("=== Disk space (C:) ===")
           $d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
@@ -181,7 +191,7 @@
           }
           if (-not $logs) { $out.Add("(no SSMS bootstrapper logs found under $($tempRoots -join ', '))") }
 
-          $Ansible.Result = @{ diag = ($out -join "`n") }
+          $Ansible.Result = @{ diag = ($out -join "`n"); exit_code = $code }
       register: ssms_diag
 
     - name: Print SSMS install diagnostics
@@ -190,7 +200,9 @@
 
     - name: Re-raise SSMS installer failure
       ansible.builtin.fail:
-        msg: "SSMS installer failed with exit code {{ install_ssms.error[0].exception.message | default('unknown') }} (diagnostics above)"
+        msg: >-
+          SSMS installer failed with exit code
+          '{{ ssms_diag.result.exit_code | default('unknown') }}' (diagnostics above)
   when: not (ssms_installation.output[0] | default(false) | bool)
 
 - name: Record pre-reboot boot time baseline (post-SSMS install)
