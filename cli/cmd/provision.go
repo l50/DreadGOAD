@@ -404,6 +404,7 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 		}
 
 		if err := ansible.RunPlaybookWithRetry(ctx, opts); err != nil {
+			log.Error("provisioning failed", "playbook", playbook, "log_file", logFile, "error", err)
 			return fmt.Errorf("provisioning failed at %s: %w\n  see full log: %s", playbook, err, logFile)
 		}
 
@@ -421,6 +422,7 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 		}
 	}
 
+	log.Info("provisioning complete", "playbooks", len(playbooks), "log_file", logFile)
 	fmt.Println("===============================================")
 	fmt.Printf("All playbooks completed successfully at %s\n", time.Now().Format(time.RFC3339))
 	fmt.Printf("Full log: %s\n", logFile)
