@@ -97,7 +97,7 @@
       Remove-Item C:\setup\mssql\ssms_done.txt -ErrorAction SilentlyContinue
   when: not (ssms_installation.output[0] | default(false) | bool)
 
-# A prior aborted SSMS 22 install can leave an unparseable
+# A prior aborted SSMS 22 install can leave an unparsable
 # C:\ProgramData\Microsoft\VisualStudio\Packages\_Instances\<id>\state.groups.json;
 # the VS Installer bootstrapper then bails with exit 1 on every subsequent run.
 # Safe to purge these dirs when no VS product is installed (SSMS 18-21 are stand-alone
