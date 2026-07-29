@@ -16,7 +16,7 @@ DreadGOAD extends the upstream GOAD project with:
 - **AWS infrastructure automation** -- Terragrunt/Terraform modules for deploying labs in AWS with SSM-based management (no open ports)
 - **Modular extension system** -- plug-in extensions for ELK, Exchange, Wazuh, Guacamole, and more
 - **Variant generator** -- create graph-isomorphic lab copies with randomized entity names while preserving all attack paths
-- **Ansible collection (`dreadnode.goad`)** -- 80+ roles packaged as a reusable collection
+- **Ansible collection (`dreadnode.goad`)** -- 130+ roles packaged as a reusable collection
 - **Multi-provider support** -- VirtualBox, VMware, Proxmox, AWS, Azure, and Ludus
 
 ## Lab Environments
@@ -26,10 +26,12 @@ DreadGOAD extends the upstream GOAD project with:
 | [GOAD](ad/GOAD/) | 5 | 2 | 3 | Full lab -- the complete Game of Active Directory experience |
 | [GOAD-Light](ad/GOAD-Light/) | 3 | 1 | 2 | Lighter variant for resource-constrained setups |
 | [GOAD-Mini](ad/GOAD-Mini/) | 1 | 1 | 1 | Minimal single-DC lab |
+| [GOAD-variant-1](ad/GOAD-variant-1/) | 5 | 2 | 3 | Graph-isomorphic copy of GOAD with randomized entity names |
 | [MINILAB](ad/MINILAB/) | 2 | 1 | 1 | One DC + one workstation |
 | [SCCM](ad/SCCM/) | 4 | 1 | 1 | MECM/SCCM attack scenarios |
-| [NHA](ad/NHA/) | 5 | 2 | 3 | Ninja Hacker Academy -- challenge mode |
-| [DRACARYS](ad/DRACARYS/) | 4 | 1 | 2 | Training challenge variant |
+| [NHA](ad/NHA/) | 5 | 2 | 2 | Ninja Hacker Academy -- challenge mode |
+| [DRACARYS](ad/DRACARYS/) | 3 | 1 | 1 | Training challenge variant |
+| [TEMPLATE](ad/TEMPLATE/) | 2 | 1 | 1 | Scaffold for authoring your own lab |
 
 All labs feature 50+ intentional vulnerabilities including Kerberoasting, AS-REP
 roasting, ACL abuse chains, ADCS misconfigurations (ESC1-8), MSSQL attacks,
@@ -111,14 +113,13 @@ Create a randomized copy of any lab with unique names but identical attack paths
 ```text
 DreadGOAD/
 ├── ad/                    # Lab definitions (GOAD, GOAD-Light, MINILAB, SCCM, NHA, ...)
-├── ansible/               # Ansible collection with 80+ roles and custom modules
-├── cli/                   # Go CLI source (dreadgoad)
+├── ansible/               # Ansible collection with 130+ roles and custom modules
+├── cli/                   # Go CLI source (dreadgoad), including the variant generator
 ├── docs/                  # Documentation and architecture diagrams
 ├── extensions/            # Pluggable lab extensions (ELK, Exchange, Wazuh, ...)
 ├── infra/                 # Terragrunt configurations for AWS deployments
 ├── modules/               # Terraform modules (AWS networking, instance factory)
 ├── packer/                # VM templating (Vagrant, Proxmox)
-├── tools/                 # Variant generator and utilities
 ├── warpgate-templates/    # Golden AMI build templates (warpgate)
 └── template/              # Provider templates
 ```
