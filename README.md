@@ -33,10 +33,14 @@ DreadGOAD extends the upstream GOAD project with:
 | [DRACARYS](ad/DRACARYS/) | 3 | 1 | 1 | Training challenge variant |
 | [TEMPLATE](ad/TEMPLATE/) | 2 | 1 | 1 | Scaffold for authoring your own lab |
 
-All labs feature 50+ intentional vulnerabilities including Kerberoasting, AS-REP
-roasting, ACL abuse chains, ADCS misconfigurations (ESC1-8), MSSQL attacks,
-delegation abuse, and more. See [docs/GOAD-vulnerabilities-comprehensive.md](docs/GOAD-vulnerabilities-comprehensive.md)
-for the full catalog.
+Vulnerability coverage varies by lab. The full GOAD lab is the richest, planting
+50+ intentional misconfigurations spanning Kerberoasting, AS-REP roasting, ACL
+abuse chains, ADCS misconfigurations (ESC1-4, ESC6-11, ESC13, ESC15), MSSQL
+linked-server abuse, and delegation abuse. The smaller labs deliberately carry a
+narrow subset: GOAD-Mini, MINILAB, DRACARYS, and TEMPLATE have no Kerberoastable
+accounts or MSSQL instances at all, and SCCM concentrates on MECM/SCCM attack
+paths. See [docs/GOAD-vulnerabilities-comprehensive.md](docs/GOAD-vulnerabilities-comprehensive.md)
+for the full catalog, which is scoped to the full GOAD lab.
 
 ## Quick Start
 
@@ -98,7 +102,7 @@ Create a randomized copy of any lab with unique names but identical attack paths
 
 - [CLI reference](docs/cli.md) -- command index plus Viper-based config, environment variables, and per-environment settings
 - [Domains and users](docs/domains-and-users.md) -- full network topology, credentials, and attack paths
-- [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- all 50+ vulnerabilities with exploitation techniques
+- [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- 50+ vulnerabilities in the full GOAD lab, with exploitation techniques
 - [Domain compromise paths](docs/domain-compromise-paths.md) -- every provisioned way to reach Domain Admin / golden ticket (29 distinct paths, ~133 permutations)
 - [Validation guide](docs/validation.md) -- automated vulnerability validation (with live dashboard and polling)
 - [Scoreboard guide](docs/scoreboard.md) -- live engagement status board (answer key + agent report verification)
