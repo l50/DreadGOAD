@@ -194,9 +194,16 @@ func Get() (*Config, error) {
 			cfg.LogDir = filepath.Join(home, ".ansible", "logs", "goad")
 		}
 
+		// A --region on the command line beats DREADGOAD_REGION, so only
+		// consult the environment when no flag was given. Both have to be
+		// handled here rather than left to viper's AutomaticEnv, which would
+		// land the variable in Region, where the per-environment region now
+		// outranks it.
 		cfg.regionOverride = regionOverride
-		if env := os.Getenv("DREADGOAD_REGION"); env != "" {
-			cfg.regionOverride = env
+		if cfg.regionOverride == "" {
+			if env := os.Getenv("DREADGOAD_REGION"); env != "" {
+				cfg.regionOverride = env
+			}
 		}
 	})
 	return cfg, initErr

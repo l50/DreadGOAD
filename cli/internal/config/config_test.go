@@ -119,6 +119,37 @@ func TestResolveRegion(t *testing.T) {
 	})
 }
 
+func TestGetRegionOverridePrecedence(t *testing.T) {
+	t.Run("an explicit --region beats DREADGOAD_REGION", func(t *testing.T) {
+		Reset()
+		defer Reset()
+		t.Setenv("DREADGOAD_REGION", "ap-southeast-1")
+		SetRegionOverride("eu-west-1")
+
+		c, err := Get()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if c.regionOverride != "eu-west-1" {
+			t.Errorf("regionOverride = %q, want the flag value %q", c.regionOverride, "eu-west-1")
+		}
+	})
+
+	t.Run("DREADGOAD_REGION applies when no flag is given", func(t *testing.T) {
+		Reset()
+		defer Reset()
+		t.Setenv("DREADGOAD_REGION", "ap-southeast-1")
+
+		c, err := Get()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if c.regionOverride != "ap-southeast-1" {
+			t.Errorf("regionOverride = %q, want the env value %q", c.regionOverride, "ap-southeast-1")
+		}
+	})
+}
+
 func TestResolveRegionWithInventory(t *testing.T) {
 	t.Run("prefers inventory region", func(t *testing.T) {
 		c := &Config{Region: "us-west-1"}
