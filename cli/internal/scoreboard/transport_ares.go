@@ -86,8 +86,8 @@ type aresDomainCompromise struct {
 }
 
 // FetchReport runs `ares ops loot --latest --json` on the remote instance and,
-// if successful, also fetches the `ares:op:<id>:exploited` Redis set so
-// technique objectives can be credited directly. Both payloads are
+// if successful, also fetches the proven subset of the `ares:op:<id>:exploited`
+// Redis set so technique objectives can be credited directly. Both payloads are
 // gzip+base64-encoded to sidestep SSM's 24KB stdout cap. Returns ErrNoReport
 // when the operation hasn't produced any state yet.
 func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
@@ -124,13 +124,26 @@ func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
 	return synthesizeJSONL(&loot, exploited), nil
 }
 
-// fetchExploited reads the `ares:op:<op>:exploited` Redis set; failures are
-// non-fatal (just means no technique findings get emitted this poll).
+// fetchExploited reads the `ares:op:<op>:exploited` Redis set minus
+// `ares:op:<op>:superseded`; failures are non-fatal (just means no technique
+// findings get emitted this poll).
+//
+// ares credits a vuln as exploited when a *different* path already reached the
+// same goal, so the technique itself was never proven: an mssql_impersonation
+// win back-credits the host's mssql_access, and a dc_secretsdump_<domain>
+// back-credits child_to_parent for that domain (ares-cli
+// `orchestrator/state/dedup.rs`). Those ids are mirrored into `:superseded`,
+// which ares documents as "subset of KEY_EXPLOITED; the technique itself was
+// never proven to work". SDIFF drops them server-side and degrades to plain
+// SMEMBERS when `:superseded` is absent, so the scoreboard only credits
+// techniques ares actually walked.
 func (t *AresTransport) fetchExploited(ctx context.Context, opID string) []string {
 	if opID == "" {
 		return nil
 	}
-	cmd := fmt.Sprintf("redis-cli SMEMBERS %s", shellQuote(fmt.Sprintf("ares:op:%s:exploited", opID)))
+	cmd := fmt.Sprintf("redis-cli SDIFF %s %s",
+		shellQuote(fmt.Sprintf("ares:op:%s:exploited", opID)),
+		shellQuote(fmt.Sprintf("ares:op:%s:superseded", opID)))
 	out, status, _, err := runSSMShell(ctx, t.Client, t.InstanceID, cmd)
 	if err != nil || status != ssmtypes.CommandInvocationStatusSuccess {
 		return nil
@@ -188,7 +201,9 @@ func aresExploitedToTechniqueIDs(entry string) []string {
 		{"unconstrained_delegation_", []string{"unconstrained_delegation"}},
 		{"forest_trust_", []string{"cross_forest_trust"}},
 		{"child_to_parent_", []string{"child_to_parent"}},
-		{"acl_abuse_", []string{"acl_abuse"}},
+		// ares emits the granted right in the id (acl_genericall_*,
+		// acl_writeproperty_*, ...); they all collapse to one objective.
+		{"acl_", []string{"acl_abuse"}},
 		{"asrep_roast_", []string{"asrep_roast"}},
 		{"kerberoast_", []string{"kerberoast"}},
 		{"llmnr_", []string{"llmnr_nbtns_poisoning"}},
@@ -201,13 +216,15 @@ func aresExploitedToTechniqueIDs(entry string) []string {
 		{"adcs_esc4_", []string{"adcs_esc4"}},
 		{"adcs_esc6_", []string{"adcs_esc6"}},
 		{"adcs_esc7_", []string{"adcs_esc7"}},
+		{"adcs_esc8_", []string{"adcs_esc8"}},
 		{"adcs_esc9_", []string{"adcs_esc9"}},
 		{"adcs_esc10_case1_", []string{"adcs_esc10_case1"}},
 		{"adcs_esc10_case2_", []string{"adcs_esc10_case2"}},
 		{"adcs_esc11_", []string{"adcs_esc11"}},
 		{"adcs_esc13_", []string{"adcs_esc13"}},
 		{"adcs_esc15_", []string{"adcs_esc15"}},
-		{"gpo_abuse_", []string{"gpo_abuse"}},
+		// Same shape as acl_: ares emits gpo_<right>_<source>_<gpo-slug>.
+		{"gpo_", []string{"gpo_abuse"}},
 		{"gmsa_", []string{"gmsa_password_read"}},
 		{"laps_", []string{"laps_password_read"}},
 		{"sid_history_", []string{"sid_history_abuse"}},
