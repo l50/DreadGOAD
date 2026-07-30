@@ -8,8 +8,4 @@ $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval $re
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -DontStopOnIdleEnd
 #$settings.CimInstanceProperties.Item('MultipleInstances').Value = 3   # 3 corresponds to 'Stop the existing instance'
 
-$taskExists = Get-ScheduledTask | Where-Object {$_.TaskName -like $taskName }
-if($taskExists) {
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-}
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -User $user -Password $password -Settings $settings
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -User $user -Password $password -Settings $settings -Force

@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 )
 
@@ -2515,8 +2516,15 @@ func (v *Validator) checkADCSESC9(ctx context.Context, w io.Writer) {
 	}
 }
 
+// esc13IssuanceName is the DisplayName esc13.ps1 gives the issuance policy OID
+// object it creates under the forest OID container.
+const esc13IssuanceName = "IssuancePolicyESC13"
+
 // checkADCSESC13 verifies the ESC13 template's msPKI-Certificate-Policy is
-// populated (the esc13.ps1 script writes the issuance policy OID into it).
+// populated (the esc13.ps1 script writes the issuance policy OID into it) and
+// that the issuance policy OID carries an msDS-OIDToGroupLink. The policy
+// attribute alone is not enough: a template can reference an OID that links to
+// no group, which leaves ESC13 unexploitable while still looking configured.
 func (v *Validator) checkADCSESC13(ctx context.Context, w io.Writer) {
 	printHeader(w, "ADCS ESC13 - Issuance Policy Link")
 
@@ -2549,7 +2557,68 @@ func (v *Validator) checkADCSESC13(ctx context.Context, w io.Writer) {
 			v.addResult(w, "PASS", "ADCS-ESC13",
 				fmt.Sprintf("ESC13 issuance policy set on %s: %s", queryHost, strings.TrimSpace(output)), "")
 		}
+		v.checkESC13GroupLink(ctx, w, queryHost)
 	}
+}
+
+// checkESC13GroupLink verifies the issuance policy OID object is linked to a
+// group via msDS-OIDToGroupLink, and that exactly one such OID object exists.
+func (v *Validator) checkESC13GroupLink(ctx context.Context, w io.Writer, dc string) {
+	output, err := runScriptTextErr(ctx, v, dc,
+		`$base = "CN=OID,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext; `+
+			`$oids = @(Get-ADObject -SearchBase $base -Filter {DisplayName -eq {{psq .Name}}} `+
+			`-Properties DisplayName,'msDS-OIDToGroupLink' -ErrorAction SilentlyContinue); `+
+			`if ($oids.Count -eq 0) { Write-Output 'NO_OID'; exit }; `+
+			`$linked = @($oids | Where-Object { $_.'msDS-OIDToGroupLink' }); `+
+			`Write-Output ("COUNT=" + $oids.Count + " LINKED=" + $linked.Count + " GROUP=" + $linked[0].'msDS-OIDToGroupLink')`,
+		map[string]any{"Name": esc13IssuanceName})
+	count, linked, parsed := parseESC13GroupLink(output)
+	switch {
+	case err != nil:
+		v.addResult(w, "WARN", "ADCS-ESC13",
+			fmt.Sprintf("Could not query %s OID on %s: %v", esc13IssuanceName, dc, err), "")
+	case strings.Contains(output, "NO_OID"):
+		v.addResult(w, "FAIL", "ADCS-ESC13",
+			fmt.Sprintf("No %s OID object on %s (esc13.ps1 has not run)", esc13IssuanceName, dc), "")
+	case !parsed:
+		v.addResult(w, "WARN", "ADCS-ESC13",
+			fmt.Sprintf("Unreadable %s OID probe output on %s: %q", esc13IssuanceName, dc, strings.TrimSpace(output)), "")
+	case linked == 0:
+		v.addResult(w, "FAIL", "ADCS-ESC13",
+			fmt.Sprintf("%s OID on %s has no msDS-OIDToGroupLink (ESC13 is not exploitable)", esc13IssuanceName, dc), "")
+	case count != 1:
+		v.addResult(w, "WARN", "ADCS-ESC13",
+			fmt.Sprintf("Duplicate %s OID objects on %s: %s", esc13IssuanceName, dc, strings.TrimSpace(output)), "")
+	default:
+		v.addResult(w, "PASS", "ADCS-ESC13",
+			fmt.Sprintf("ESC13 OID linked on %s: %s", dc, strings.TrimSpace(output)), "")
+	}
+}
+
+// parseESC13GroupLink pulls COUNT and LINKED out of the probe's key=value line.
+// It splits fields rather than substring-matching because "COUNT=10" contains
+// "COUNT=1": a lab that accumulated ten stale OID objects would otherwise read
+// as the healthy single-object case. Trailing GROUP= is a DN that may itself
+// contain spaces and "=", so only the two integer keys are trusted.
+func parseESC13GroupLink(output string) (count, linked int, ok bool) {
+	var haveCount, haveLinked bool
+	for _, field := range strings.Fields(output) {
+		key, val, found := strings.Cut(field, "=")
+		if !found {
+			continue
+		}
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			continue
+		}
+		switch key {
+		case "COUNT":
+			count, haveCount = n, true
+		case "LINKED":
+			linked, haveLinked = n, true
+		}
+	}
+	return count, linked, haveCount && haveLinked
 }
 
 // ---- Section 16: DNS / Audit ----
