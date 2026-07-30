@@ -32,6 +32,91 @@ func TestResolveRegion(t *testing.T) {
 			t.Errorf("error should mention region, got: %v", err)
 		}
 	})
+
+	t.Run("prefers the active environment's region over the global one", func(t *testing.T) {
+		c := &Config{
+			Env:    "staging",
+			Region: "us-east-1",
+			Environments: map[string]EnvironmentConfig{
+				"staging": {Region: "us-west-1"},
+				"prod":    {Region: "us-east-1"},
+			},
+		}
+		got, err := c.ResolveRegion()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "us-west-1" {
+			t.Errorf("ResolveRegion() = %q, want %q", got, "us-west-1")
+		}
+	})
+
+	t.Run("falls back to the global region when the environment declares none", func(t *testing.T) {
+		c := &Config{
+			Env:          "dev",
+			Region:       "us-east-1",
+			Environments: map[string]EnvironmentConfig{"dev": {VpcCidr: "10.0.0.0/16"}},
+		}
+		got, err := c.ResolveRegion()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "us-east-1" {
+			t.Errorf("ResolveRegion() = %q, want %q", got, "us-east-1")
+		}
+	})
+
+	t.Run("falls back to the global region for an undefined environment", func(t *testing.T) {
+		c := &Config{Env: "nope", Region: "us-east-1"}
+		got, err := c.ResolveRegion()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "us-east-1" {
+			t.Errorf("ResolveRegion() = %q, want %q", got, "us-east-1")
+		}
+	})
+
+	t.Run("an explicit override outranks the environment region", func(t *testing.T) {
+		c := &Config{
+			Env:            "staging",
+			Region:         "us-east-1",
+			regionOverride: "eu-west-1",
+			Environments:   map[string]EnvironmentConfig{"staging": {Region: "us-west-1"}},
+		}
+		got, err := c.ResolveRegion()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "eu-west-1" {
+			t.Errorf("ResolveRegion() = %q, want %q", got, "eu-west-1")
+		}
+	})
+
+	t.Run("the environment region satisfies an empty global region", func(t *testing.T) {
+		c := &Config{
+			Env:          "staging",
+			Environments: map[string]EnvironmentConfig{"staging": {Region: "us-west-1"}},
+		}
+		got, err := c.ResolveRegion()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "us-west-1" {
+			t.Errorf("ResolveRegion() = %q, want %q", got, "us-west-1")
+		}
+	})
+
+	t.Run("error names the environment key to set", func(t *testing.T) {
+		c := &Config{Env: "staging"}
+		_, err := c.ResolveRegion()
+		if err == nil {
+			t.Fatal("expected error when no region available, got nil")
+		}
+		if !strings.Contains(err.Error(), "environments.staging.region") {
+			t.Errorf("error should name the per-env key, got: %v", err)
+		}
+	})
 }
 
 func TestResolveRegionWithInventory(t *testing.T) {
