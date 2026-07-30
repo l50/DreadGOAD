@@ -200,6 +200,7 @@ var creditableCategories = map[string]string{
 	"laps_password_read":       "laps_password_read",
 	"rbcd":                     "rbcd",
 	"nopac":                    "nopac",
+	"printnightmare":           "printnightmare",
 }
 
 // uncreditableCategories are ares categories that must never produce technique
@@ -210,16 +211,22 @@ var creditableCategories = map[string]string{
 //   - "golden_ticket" is flat in ares but per-domain in the answer key
 //     (golden_ticket-<domain>). That credit comes from domain_compromise[],
 //     which carries the domain the flat category drops.
-//   - "printnightmare" and "zerologon" are uncreditable by design: ares mints
-//     both on evidence that precedes success (printnightmare accepts "Stub
-//     loaded"/"[+] Triggering"; zerologon only runs the nxc check module,
-//     never the reset). ares-cli #366 promoted them out of "other", so without
-//     an explicit refusal they would start crediting attempts as exploits.
+//   - "zerologon" is uncreditable by design: ares only ever runs the nxc
+//     zerologon check module, never the password reset, so the category counts
+//     detections and crediting it would score a scan as an exploit. ares-cli
+//     #366 promoted it out of "other", so without an explicit refusal it would
+//     start crediting scans.
+//
+// "printnightmare" was refused here on the same grounds until ares-cli #367.
+// The rationale was wrong about the mechanism: its gate matched five markers
+// cube0x0/CVE-2021-1675 never prints, so it could not fire at all and the
+// technique scored zero rather than over-crediting. #367 rebuilt the gate on a
+// single "exploit completed" match taken from the PoC's real output, so the
+// category now means what it says and is credited like any other.
 var uncreditableCategories = map[string]bool{
-	"other":          true,
-	"golden_ticket":  true,
-	"printnightmare": true,
-	"zerologon":      true,
+	"other":         true,
+	"golden_ticket": true,
+	"zerologon":     true,
 }
 
 // aresCategoryToTechniqueID returns the answer-key technique ID for an ares
