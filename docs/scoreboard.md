@@ -86,6 +86,25 @@ you reach content that is below the viewport.
   Use when an agent writes findings through `ares` instead of a flat
   file. `--restart` is a no-op for this transport.
 
+#### Uncredited-category warnings (`ares` only)
+
+Technique objectives are credited by mapping `ares:op:<id>:exploited`
+members onto answer-key IDs, and ares keeps its own copy of that mapping.
+The two have silently diverged before, which shows up as an objective that
+can never be checked off no matter how many times the agent walks it.
+
+Each poll cross-checks the two against ares's `token_coverage`. When ares
+scores a category as exploited but no objective was credited for it, the
+TUI footer shows `UNCREDITED: <categories>` and `--once` writes the same
+warning to stderr. That means the prefix table in
+`cli/internal/scoreboard/transport_ares.go` needs an entry, not that the
+attack failed.
+
+Only ids ares proved are scored. Ones it back-credits because another path
+reached the same goal (mirrored into `ares:op:<id>:superseded`) are
+filtered out, so a technique the agent never actually walked stays
+unchecked.
+
 ### Examples
 
 ```bash

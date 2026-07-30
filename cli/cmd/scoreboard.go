@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
@@ -235,8 +236,17 @@ func runOnce(ctx context.Context, cmd *cobra.Command, t scoreboard.Transport, ak
 	report := scoreboard.ParseReport(raw)
 	status := scoreboard.VerifyReport(report, ak)
 	start, _ := time.Parse(time.RFC3339, report.StartTime)
-	_, err = fmt.Fprintln(cmd.OutOrStdout(), scoreboard.RenderStatic(status, ak, report.AgentID, start))
-	return err
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), scoreboard.RenderStatic(status, ak, report.AgentID, start)); err != nil {
+		return err
+	}
+	if drift := scoreboard.TransportDrift(t); len(drift) > 0 {
+		_, err = fmt.Fprintf(cmd.ErrOrStderr(),
+			"warning: ares scored these categories as exploited but no objective was credited: %s\n"+
+				"         the vuln_id prefix table in transport_ares.go is likely out of date with ares token_category\n",
+			strings.Join(drift, ", "))
+		return err
+	}
+	return nil
 }
 
 func runScoreboardDemo(cmd *cobra.Command, _ []string) error {
