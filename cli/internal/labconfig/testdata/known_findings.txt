@@ -4,7 +4,6 @@
 # listed here fails the test; a line here that no longer occurs also fails, so
 # this list can only shrink. Every entry needs a reason and an intended fix.
 #
-# Intentionally empty: every lab in ad/, in every environment, currently passes.
 # Only add an entry when a finding is understood and deliberately deferred, never
 # to quiet a failure you have not diagnosed.
 #
@@ -13,3 +12,13 @@
 # ad/GOAD/data/dev-overlay.json moves the thewall share to dc02 alongside the
 # flag, and GOAD-Light and GOAD-variant-1 dropped a dc02 `shares` flag that had
 # no share definition anywhere in the lab.
+#
+# The two entries below are that same relocation seen from the other side, and
+# they are correct rather than deferred. dev moves the `shares` vuln off srv02
+# and onto dc02, carrying vulns_vars.thewall with it and nulling the srv02
+# vulns_vars.shares, so CheckOverlayDrops sees srv02 lose a vuln the base grants
+# it. The capability is not lost, only rehomed, and the null is the overlay
+# stating that intent explicitly. Delete these lines if dev ever stops moving
+# the share.
+GOAD|dev|hosts["srv02"].vulns: overlay drops an entry the base config declares, so it is never provisioned in this environment ("shares")
+GOAD-variant-1|dev|hosts["srv02"].vulns: overlay drops an entry the base config declares, so it is never provisioned in this environment ("shares")
