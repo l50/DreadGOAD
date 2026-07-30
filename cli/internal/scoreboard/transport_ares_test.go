@@ -52,6 +52,8 @@ func TestAresExploitedToTechniqueIDs(t *testing.T) {
 		{"ntlm relay", "ntlm_relay_192_168_58_10", []string{"ntlm_relay"}},
 		{"ntlmv1 downgrade", "ntlmv1_192_168_58_12", []string{"ntlmv1_downgrade"}},
 		{"seimpersonate", "seimpersonate_sql01", []string{"seimpersonate"}},
+		{"nopac", "nopac_192_168_58_240", []string{"nopac"}},
+		{"printnightmare", "printnightmare_192_168_58_22", []string{"printnightmare"}},
 		{"sid history", "sid_history_alice", []string{"sid_history_abuse"}},
 		{"constrained delegation", "constrained_delegation_svc_web", []string{"constrained_delegation"}},
 		{"unconstrained delegation", "unconstrained_delegation_dc01", []string{"unconstrained_delegation"}},
@@ -64,6 +66,11 @@ func TestAresExploitedToTechniqueIDs(t *testing.T) {
 
 		// Per-domain objective, lowercased.
 		{"golden ticket", "golden_ticket_CONTOSO.LOCAL", []string{"golden_ticket-contoso.local"}},
+
+		// Deliberately unmapped despite ares minting the prefix: ares only
+		// ever runs the nxc zerologon check module, never the password
+		// reset, so the id represents a detection and not an exploit.
+		{"zerologon check only", "zerologon_192_168_58_240", nil},
 
 		// Discovery-only ids ares tracks that are not scoreboard techniques.
 		{"smb signing", "smb_signing_192_168_58_10", nil},
@@ -105,6 +112,8 @@ func TestAresExploitedTechniquesExistInAnswerKey(t *testing.T) {
 		"adcs_esc8_192.168.58.50_ca01",
 		"kerberoast_svc_sql",
 		"mssql_linked_server_192_168_58_22_sql01",
+		"nopac_192_168_58_240",
+		"printnightmare_192_168_58_22",
 	}
 	for _, entry := range entries {
 		ids := aresExploitedToTechniqueIDs(entry)

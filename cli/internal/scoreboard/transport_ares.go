@@ -210,6 +210,8 @@ func aresExploitedToTechniqueIDs(entry string) []string {
 		{"ntlm_relay_", []string{"ntlm_relay"}},
 		{"ntlmv1_", []string{"ntlmv1_downgrade"}},
 		{"seimpersonate_", []string{"seimpersonate"}},
+		{"nopac_", []string{"nopac"}},
+		{"printnightmare_", []string{"printnightmare"}},
 		{"adcs_esc1_", []string{"adcs_esc1"}},
 		{"adcs_esc2_", []string{"adcs_esc2"}},
 		{"adcs_esc3_", []string{"adcs_esc3"}}, // collapses ESC3 + ESC3-CRA
