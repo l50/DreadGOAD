@@ -10,16 +10,16 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/provider"
 )
 
-// esc6Envelope wraps a payload the way registry_dword.ps1 does; runScriptJSON
+// kdcEnvelope wraps a payload the way registry_dword.ps1 does; runScriptJSON
 // discards anything without the markers.
-func esc6Envelope(payload string) string {
+func kdcEnvelope(payload string) string {
 	return "===BEGIN_JSON===\n" + payload + "\n===END_JSON===\n"
 }
 
-// esc6Lab models the GOAD shape that makes this check necessary: the CA
+// kdcBindingLab models the GOAD shape that makes this check necessary: the CA
 // (braavos) is a member server, so the KDC that validates its certificates is
 // the DC of the CA's own domain (meereen), not the CA host.
-func esc6Lab() *labmap.LabMap {
+func kdcBindingLab() *labmap.LabMap {
 	return &labmap.LabMap{
 		Hosts: map[string]labmap.HostInfo{
 			"srv03": {NewHostname: "braavos", NewDomain: "essos.local"},
@@ -55,8 +55,10 @@ func TestCheckESC6KDCBinding(t *testing.T) {
 			wantDetail: "ESC6 exploitable",
 		},
 		{
-			// The measured dc03 state. Compatibility mode still validates a
-			// present security extension, so the SID mismatch is rejected.
+			// Compatibility mode still validates a present security
+			// extension, so the SID mismatch is rejected. This is the case
+			// that separates ESC6 from ESC9: an ESC9 certificate has no
+			// extension to validate and survives here.
 			name:       "SCBE=1 compatibility rejects the SID mismatch",
 			stdout:     `{"present":true,"value":1,"error":""}`,
 			wantStatus: "FAIL",
@@ -69,14 +71,16 @@ func TestCheckESC6KDCBinding(t *testing.T) {
 			wantDetail: "NOT exploitable",
 		},
 		{
-			// The trap that produced a wrong conclusion once already: an
-			// absent value means the KDC built-in default applies, and the
-			// registry cannot say which default that is. Anything but WARN
-			// here asserts a state nobody observed.
-			name:       "absent value is unknown, not exploitable",
+			// An absent value is not "unknown, possibly permissive". The
+			// built-in default has been Full Enforcement since KB5014754
+			// (Feb 2025), and the essos KDC, which sets no value, was
+			// measured refusing a certificate outright: event 39 at Error
+			// level, no TGT. Reporting WARN here would leave a dead route
+			// looking merely unverified.
+			name:       "absent value means Full Enforcement, not exploitable",
 			stdout:     `{"present":false,"value":0,"error":""}`,
-			wantStatus: "WARN",
-			wantDetail: "KDC default is unknown",
+			wantStatus: "FAIL",
+			wantDetail: "shipped default of Full Enforcement",
 		},
 		{
 			name:       "script error warns",
@@ -89,10 +93,10 @@ func TestCheckESC6KDCBinding(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			v, _ := newStubValidator(t, func(_ int, _ string) (*provider.CommandResult, error) {
-				return &provider.CommandResult{Status: "Success", Stdout: esc6Envelope(tt.stdout)}, nil
+				return &provider.CommandResult{Status: "Success", Stdout: kdcEnvelope(tt.stdout)}, nil
 			})
 			v.silent = true
-			v.lab = esc6Lab()
+			v.lab = kdcBindingLab()
 			v.hosts = map[string]string{"SRV03": "i-srv03", "DC03": "i-dc03"}
 
 			v.checkESC6KDCBinding(context.Background(), io.Discard, "srv03", "BRAAVOS")
@@ -116,10 +120,10 @@ func TestCheckESC6KDCBinding(t *testing.T) {
 // CA-side probe was green while the deciding KDC was never consulted.
 func TestCheckESC6KDCBinding_ReportsDCNotCA(t *testing.T) {
 	v, _ := newStubValidator(t, func(_ int, _ string) (*provider.CommandResult, error) {
-		return &provider.CommandResult{Status: "Success", Stdout: esc6Envelope(`{"present":true,"value":1,"error":""}`)}, nil
+		return &provider.CommandResult{Status: "Success", Stdout: kdcEnvelope(`{"present":true,"value":1,"error":""}`)}, nil
 	})
 	v.silent = true
-	v.lab = esc6Lab()
+	v.lab = kdcBindingLab()
 	v.hosts = map[string]string{"SRV03": "i-srv03", "DC03": "i-dc03"}
 
 	v.checkESC6KDCBinding(context.Background(), io.Discard, "srv03", "BRAAVOS")
@@ -140,10 +144,10 @@ func TestCheckESC6KDCBinding_ReadsKDCKeyOnDC(t *testing.T) {
 	var gotScript string
 	v, _ := newStubValidator(t, func(_ int, command string) (*provider.CommandResult, error) {
 		gotScript = command
-		return &provider.CommandResult{Status: "Success", Stdout: esc6Envelope(`{"present":true,"value":0,"error":""}`)}, nil
+		return &provider.CommandResult{Status: "Success", Stdout: kdcEnvelope(`{"present":true,"value":0,"error":""}`)}, nil
 	})
 	v.silent = true
-	v.lab = esc6Lab()
+	v.lab = kdcBindingLab()
 	v.hosts = map[string]string{"SRV03": "i-srv03", "DC03": "i-dc03"}
 
 	v.checkESC6KDCBinding(context.Background(), io.Discard, "srv03", "BRAAVOS")
@@ -162,7 +166,7 @@ func TestCheckESC6KDCBinding_ReadsKDCKeyOnDC(t *testing.T) {
 // An unresolvable DC is unknown, not exploitable.
 func TestCheckESC6KDCBinding_NoDCResolvedWarns(t *testing.T) {
 	v, _ := newStubValidator(t, func(_ int, _ string) (*provider.CommandResult, error) {
-		return &provider.CommandResult{Status: "Success", Stdout: esc6Envelope(`{"present":true,"value":0,"error":""}`)}, nil
+		return &provider.CommandResult{Status: "Success", Stdout: kdcEnvelope(`{"present":true,"value":0,"error":""}`)}, nil
 	})
 	v.silent = true
 	v.lab = &labmap.LabMap{

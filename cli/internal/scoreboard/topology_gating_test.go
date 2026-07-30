@@ -21,15 +21,20 @@ func techniqueSet(t *testing.T, lab string) map[string]bool {
 	return out
 }
 
-// TestTopologyGatedTechniques pins the techniques that must not be credited to
-// labs that cannot host them. These were previously added unconditionally, which
-// put uncompletable objectives on the answer key: ADCS techniques on labs with no
+// The tests below pin the techniques that must not be credited to labs that
+// cannot host them. These were previously added unconditionally, which put
+// uncompletable objectives on the answer key: ADCS techniques on labs with no
 // CA, and child-to-parent escalation on labs with no child domain.
-func TestTopologyGatedTechniques(t *testing.T) {
-	// Labs with no ADCS provisioning at all. MINILAB, SCCM, and DRACARYS have an
-	// empty `adcs` inventory group; TEMPLATE is a scaffold that plants no ADCS.
+//
+// They are split by concern rather than nested under one function so each stays
+// under the repo's gocyclo threshold.
+
+// TestTopologyGatedTechniquesNoADCS covers labs with no ADCS provisioning at
+// all. MINILAB, SCCM, and DRACARYS have an empty `adcs` inventory group;
+// TEMPLATE is a scaffold that plants no ADCS.
+func TestTopologyGatedTechniquesNoADCS(t *testing.T) {
 	for _, lab := range []string{"MINILAB", "SCCM", "DRACARYS", "TEMPLATE"} {
-		t.Run("no_adcs/"+lab, func(t *testing.T) {
+		t.Run(lab, func(t *testing.T) {
 			techs := techniqueSet(t, lab)
 			for _, id := range []string{"certifried", "adcs_esc8"} {
 				if techs[id] {
@@ -38,34 +43,41 @@ func TestTopologyGatedTechniques(t *testing.T) {
 			}
 		})
 	}
+}
 
-	// Single-domain labs, and NHA whose two domains are separate forest roots
-	// (ninja.hack and academy.ninja.lan), so neither is a child of the other.
+// TestTopologyGatedTechniquesNoChildDomain covers single-domain labs, and NHA
+// whose two domains are separate forest roots (ninja.hack and
+// academy.ninja.lan), so neither is a child of the other.
+func TestTopologyGatedTechniquesNoChildDomain(t *testing.T) {
 	for _, lab := range []string{"GOAD-Mini", "MINILAB", "SCCM", "DRACARYS", "TEMPLATE", "NHA"} {
-		t.Run("no_child_domain/"+lab, func(t *testing.T) {
+		t.Run(lab, func(t *testing.T) {
 			if techniqueSet(t, lab)["child_to_parent"] {
 				t.Errorf("%s has no parent/child domain pair but was credited child_to_parent", lab)
 			}
 		})
 	}
+}
 
-	// NHA installs a CA, so Certifried stands, but its CA-bearing domain sets
-	// ca_web_enrollment=false, so ESC8 must not be credited.
-	t.Run("nha_web_enrollment_disabled", func(t *testing.T) {
-		techs := techniqueSet(t, "NHA")
-		if !techs["certifried"] {
-			t.Error("NHA installs a CA and should still be credited certifried")
-		}
-		if techs["adcs_esc8"] {
-			t.Error("NHA disables ca_web_enrollment and must not be credited adcs_esc8")
-		}
-	})
+// TestTopologyGatedTechniquesNHAWebEnrollment pins NHA specifically: it installs
+// a CA, so Certifried stands, but its CA-bearing domain sets
+// ca_web_enrollment=false, so ESC8 must not be credited.
+func TestTopologyGatedTechniquesNHAWebEnrollment(t *testing.T) {
+	techs := techniqueSet(t, "NHA")
+	if !techs["certifried"] {
+		t.Error("NHA installs a CA and should still be credited certifried")
+	}
+	if techs["adcs_esc8"] {
+		t.Error("NHA disables ca_web_enrollment and must not be credited adcs_esc8")
+	}
+}
 
-	// Labs that do provision a CA keep their ADCS techniques. GOAD-Light and
-	// GOAD-Mini install one via the `adcs` inventory group without setting the
-	// domain-level ca_server key, so gating on ca_server alone would regress them.
+// TestTopologyGatedTechniquesHasADCS pins that labs which do provision a CA keep
+// their ADCS techniques. GOAD-Light and GOAD-Mini install one via the `adcs`
+// inventory group without setting the domain-level ca_server key, so gating on
+// ca_server alone would regress them.
+func TestTopologyGatedTechniquesHasADCS(t *testing.T) {
 	for _, lab := range []string{"GOAD", "GOAD-Light", "GOAD-Mini", "GOAD-variant-1"} {
-		t.Run("has_adcs/"+lab, func(t *testing.T) {
+		t.Run(lab, func(t *testing.T) {
 			techs := techniqueSet(t, lab)
 			for _, id := range []string{"certifried", "adcs_esc8"} {
 				if !techs[id] {
@@ -74,16 +86,81 @@ func TestTopologyGatedTechniques(t *testing.T) {
 			}
 		})
 	}
+}
 
-	// GOAD-variant-1 is generated from GOAD and publishes the same certificate
-	// templates, so it must credit the same per-template ESC techniques.
-	t.Run("variant_matches_goad_templates", func(t *testing.T) {
-		goad := techniqueSet(t, "GOAD")
-		variant := techniqueSet(t, "GOAD-variant-1")
-		for _, id := range []string{"adcs_esc1", "adcs_esc2", "adcs_esc3", "adcs_esc4", "adcs_esc9"} {
-			if goad[id] && !variant[id] {
-				t.Errorf("GOAD credits %q but GOAD-variant-1 does not", id)
-			}
+// TestTopologyGatedTechniquesVariantMatchesGOAD pins that GOAD-variant-1, which
+// is generated from GOAD and publishes the same certificate templates, credits
+// the same per-template ESC techniques.
+func TestTopologyGatedTechniquesVariantMatchesGOAD(t *testing.T) {
+	goad := techniqueSet(t, "GOAD")
+	variant := techniqueSet(t, "GOAD-variant-1")
+	for _, id := range []string{"adcs_esc1", "adcs_esc2", "adcs_esc3", "adcs_esc4", "adcs_esc9"} {
+		if goad[id] && !variant[id] {
+			t.Errorf("GOAD credits %q but GOAD-variant-1 does not", id)
 		}
-	})
+	}
+}
+
+// TestTopologyGatedTechniquesKDCBound pins ESC6 and ESC9, which need a KDC that
+// will accept a weak certificate mapping. Both labs now pin
+// StrongCertificateBindingEnforcement=0 in the domain that owns the CA and the
+// templates. Before that pin the routes were dead on a patched lab while the
+// answer key still demanded them.
+func TestTopologyGatedTechniquesKDCBound(t *testing.T) {
+	for _, lab := range []string{"GOAD", "GOAD-variant-1"} {
+		t.Run(lab, func(t *testing.T) {
+			techs := techniqueSet(t, lab)
+			for _, id := range []string{"adcs_esc6", "adcs_esc9"} {
+				if !techs[id] {
+					t.Errorf("%s pins a weak KDC binding in its CA domain but lost %q", lab, id)
+				}
+			}
+		})
+	}
+}
+
+// A weak binding pinned in some other domain does not make ESC6 or ESC9
+// reachable. This is the exact GOAD shape that hid the problem: the permissive
+// KDC sat in a forest with nothing to enrol against, so any lab-wide check for
+// one read as green.
+func TestADCSTechniquesGatedOnSameDomainKDCPin(t *testing.T) {
+	hosts := map[string]any{
+		"dc01": map[string]any{
+			"domain": "sevenkingdoms.local",
+			"vulns":  []any{"adcs_esc10_case1"},
+		},
+		"dc03": map[string]any{
+			"domain":               "essos.local",
+			"vulns_adcs_templates": []any{"ESC1", "ESC9"},
+		},
+		"srv03": map[string]any{
+			"domain": "essos.local",
+			"vulns":  []any{"adcs_esc6"},
+		},
+	}
+
+	collect := func(hosts map[string]any) map[string]bool {
+		got := map[string]bool{}
+		addHostTechniques(hosts, func(id, _, _ string) { got[id] = true })
+		return got
+	}
+
+	techs := collect(hosts)
+	if !techs["adcs_esc1"] {
+		t.Error("adcs_esc1 does not depend on the KDC binding and must still be credited")
+	}
+	for _, id := range []string{"adcs_esc6", "adcs_esc9"} {
+		if techs[id] {
+			t.Errorf("%s credited with the only KDC pin in another domain", id)
+		}
+	}
+
+	// Move the pin into the domain that holds the CA and both come back.
+	hosts["dc03"].(map[string]any)["vulns"] = []any{"adcs_esc10_case1"}
+	techs = collect(hosts)
+	for _, id := range []string{"adcs_esc6", "adcs_esc9"} {
+		if !techs[id] {
+			t.Errorf("%s not credited despite a weak KDC binding in its own domain", id)
+		}
+	}
 }

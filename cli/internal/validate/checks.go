@@ -6,6 +6,7 @@ package validate
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -733,6 +734,67 @@ func (v *Validator) checkADCSESC6(ctx context.Context, w io.Writer) {
 	}
 }
 
+// kdcBinding is one KDC's StrongCertificateBindingEnforcement state, read from
+// the DC that will validate certificates issued in a given domain.
+type kdcBinding struct {
+	// DCLabel is the hostname of the DC the value was read from.
+	DCLabel string
+	Value   int
+	// Present is false when the value is absent, which means the KDC falls
+	// back to its shipped default rather than to anything the lab chose.
+	Present bool
+}
+
+// unpinnedKDCNote explains what an absent StrongCertificateBindingEnforcement
+// value means now that Microsoft has moved the default under us.
+//
+// The Feb 2025 hardening rollout (KB5014754) made Full Enforcement the built-in
+// default, so an unset value is not "unknown, possibly permissive": it is the
+// strict mode. That was confirmed behaviourally on this lab's essos KDC, which
+// has no value set and refused an ESC9 certificate with event 39 logged at
+// *Error* level. Event 39's level is the discriminator, not its presence:
+// Compatibility permits the logon and logs 39 as a Warning.
+const unpinnedKDCNote = "has no StrongCertificateBindingEnforcement value, so its KDC takes the shipped default of Full Enforcement (KB5014754, Feb 2025)"
+
+// readKDCBinding resolves the DC whose KDC validates certificates for adcsRole's
+// domain and reads its StrongCertificateBindingEnforcement value.
+//
+// The KDC that matters is the DC of the certificate's own domain, not the CA
+// host and not whichever DC in the lab happens to be permissive. GOAD pins
+// StrongCertificateBindingEnforcement=0 on kingslanding while the CA and every
+// vulnerable template live in essos, so a check that reads any DC but this one
+// credits an exploit that cannot land.
+func (v *Validator) readKDCBinding(ctx context.Context, adcsRole string) (kdcBinding, error) {
+	dcRole := v.lab.ADCSDCRole(adcsRole)
+	if dcRole == "" {
+		if domain := v.lab.DomainForHost(adcsRole); domain != "" {
+			dcRole = v.lab.DCForDomain(domain)
+		}
+	}
+	if dcRole == "" {
+		return kdcBinding{}, errors.New("no DC resolved for its domain")
+	}
+	dcHost := strings.ToUpper(dcRole)
+	if !v.hasHost(dcHost) {
+		return kdcBinding{DCLabel: dcHost}, fmt.Errorf("validating DC %s is unreachable", dcHost)
+	}
+
+	b := kdcBinding{DCLabel: strings.ToUpper(v.lab.Hostname(dcRole))}
+	r, err := runScriptJSON[registryDWORDResult](ctx, v, dcHost, scriptRegistryDWORD,
+		map[string]any{
+			"Path": `HKLM:\SYSTEM\CurrentControlSet\Services\Kdc`,
+			"Name": "StrongCertificateBindingEnforcement",
+		})
+	switch {
+	case err != nil:
+		return b, fmt.Errorf("could not query StrongCertificateBindingEnforcement on %s: %w", b.DCLabel, err)
+	case r.Error != "":
+		return b, fmt.Errorf("StrongCertificateBindingEnforcement query error on %s: %s", b.DCLabel, r.Error)
+	}
+	b.Value, b.Present = r.Value, r.Present
+	return b, nil
+}
+
 // checkESC6KDCBinding decides whether a CA with EDITF_ATTRIBUTESUBJECTALTNAME2
 // set can actually win, which the CA-side flag alone does not establish.
 //
@@ -743,57 +805,23 @@ func (v *Validator) checkADCSESC6(ctx context.Context, w io.Writer) {
 // (Disabled) ignores that extension. At 1 (Compatibility) a *present* extension
 // is still validated strictly and the mismatch is rejected, and 2 (Full
 // Enforcement) rejects it as well. So the pass condition is ==0, not !=2.
-//
-// The KDC that matters is the DC of the CA's own domain, not the CA host, which
-// is why a CA and the one permissive KDC can sit in different forests and leave
-// ESC6 dead while every CA-side probe reports green.
 func (v *Validator) checkESC6KDCBinding(ctx context.Context, w io.Writer, role, hostLabel string) {
-	dcRole := v.lab.ADCSDCRole(role)
-	if dcRole == "" {
-		if domain := v.lab.DomainForHost(role); domain != "" {
-			dcRole = v.lab.DCForDomain(domain)
-		}
-	}
-	if dcRole == "" {
+	b, err := v.readKDCBinding(ctx, role)
+	if err != nil {
 		v.addResult(w, "WARN", "ADCS-ESC6",
-			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but no DC resolved for its domain; cannot confirm ESC6 is exploitable", hostLabel), "")
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but %s; cannot confirm ESC6 is exploitable", hostLabel, err), "")
 		return
 	}
-	dcHost := strings.ToUpper(dcRole)
-	if !v.hasHost(dcHost) {
-		v.addResult(w, "WARN", "ADCS-ESC6",
-			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but validating DC %s is unreachable; cannot confirm ESC6 is exploitable", hostLabel, dcHost), "")
-		return
-	}
-	dcLabel := strings.ToUpper(v.lab.Hostname(dcRole))
-
-	r, err := runScriptJSON[registryDWORDResult](ctx, v, dcHost, scriptRegistryDWORD,
-		map[string]any{
-			"Path": `HKLM:\SYSTEM\CurrentControlSet\Services\Kdc`,
-			"Name": "StrongCertificateBindingEnforcement",
-		})
 	switch {
-	case err != nil:
-		v.addResult(w, "WARN", "ADCS-ESC6",
-			fmt.Sprintf("Could not query StrongCertificateBindingEnforcement on %s: %v", dcLabel, err), "")
-	case r.Error != "":
-		v.addResult(w, "WARN", "ADCS-ESC6",
-			fmt.Sprintf("StrongCertificateBindingEnforcement query error on %s: %s", dcLabel, r.Error), "")
-	case !r.Present:
-		// An absent value means the KDC built-in default applies, and the
-		// registry cannot tell you which default that is. Read the KDC
-		// operational log instead and compare event 39 (weak mapping
-		// accepted, so Compatibility) against event 40 (weak mapping denied,
-		// so Full Enforcement). Reporting PASS here would assert an
-		// exploitability we have not observed.
-		v.addResult(w, "WARN", "ADCS-ESC6",
-			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but %s has no StrongCertificateBindingEnforcement value, so its KDC default is unknown; check Microsoft-Windows-Kerberos-Key-Distribution-Center events 39 vs 40 on %s", hostLabel, dcLabel, dcLabel), "")
-	case r.Value == 0:
+	case !b.Present:
+		v.addResult(w, "FAIL", "ADCS-ESC6",
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but %s %s, which rejects the SID mismatch (ESC6 NOT exploitable); pin it with the adcs_esc10_case1 vuln", hostLabel, b.DCLabel, unpinnedKDCNote), "")
+	case b.Value == 0:
 		v.addResult(w, "PASS", "ADCS-ESC6",
-			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s and StrongCertificateBindingEnforcement=0 on %s (ESC6 exploitable)", hostLabel, dcLabel), "")
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s and StrongCertificateBindingEnforcement=0 on %s (ESC6 exploitable)", hostLabel, b.DCLabel), "")
 	default:
 		v.addResult(w, "FAIL", "ADCS-ESC6",
-			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but StrongCertificateBindingEnforcement=%d on %s, which validates the security extension and rejects the SID mismatch (ESC6 NOT exploitable)", hostLabel, r.Value, dcLabel), "")
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but StrongCertificateBindingEnforcement=%d on %s, which validates the security extension and rejects the SID mismatch (ESC6 NOT exploitable)", hostLabel, b.Value, b.DCLabel), "")
 	}
 }
 
@@ -2576,6 +2604,82 @@ func (v *Validator) checkADCSESC9(ctx context.Context, w io.Writer) {
 	}
 	if len(asrepDCs) > 0 && !any {
 		v.addResult(w, "FAIL", "ADCS-ESC9", "No ESC9 pivot users found in any AS-REP-configured domain", "")
+	}
+
+	v.checkESC9Enforcement(ctx, w)
+}
+
+// ctFlagNoSecurityExtension is CT_FLAG_NO_SECURITY_EXTENSION in
+// msPKI-Enrollment-Flag: the bit that makes a template an ESC9 template by
+// omitting szOID_NTDS_CA_SECURITY_EXT from every certificate it issues.
+const ctFlagNoSecurityExtension = 0x00080000
+
+// checkESC9Enforcement verifies the two conditions the pivot user does not
+// establish: that the ESC9 template really drops the SID security extension,
+// and that the KDC which will see the resulting certificate still accepts a
+// weak mapping.
+//
+// Both are checked per template DC, and the template is checked first so labs
+// that publish no ESC9 template (GOAD-Light, GOAD-Mini, NHA) report INFO rather
+// than a KDC verdict about a route they never shipped.
+func (v *Validator) checkESC9Enforcement(ctx context.Context, w io.Writer) {
+	for _, dcRole := range v.adcsTemplateDCs() {
+		dc := strings.ToUpper(dcRole)
+		if !v.hasHost(dc) {
+			continue
+		}
+		output := v.adcsTemplateAttr(ctx, dc, "ESC9", "msPKI-Enrollment-Flag")
+		val := strings.TrimSpace(output)
+		flag, parseErr := strconv.ParseInt(val, 10, 64)
+		switch {
+		case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
+			v.addResult(w, "INFO", "ADCS-ESC9",
+				fmt.Sprintf("ESC9 template not present on %s", dc), "")
+		case val == "" || parseErr != nil:
+			v.addResult(w, "WARN", "ADCS-ESC9",
+				fmt.Sprintf("Could not read ESC9 template msPKI-Enrollment-Flag on %s", dc), "")
+		case uint32(flag)&ctFlagNoSecurityExtension == 0:
+			v.addResult(w, "FAIL", "ADCS-ESC9",
+				fmt.Sprintf("ESC9 template on %s lacks CT_FLAG_NO_SECURITY_EXTENSION (msPKI-Enrollment-Flag=%s)", dc, val), "")
+		default:
+			v.checkESC9KDCBinding(ctx, w, dcRole)
+		}
+	}
+}
+
+// checkESC9KDCBinding decides whether an issued ESC9 certificate can convert to
+// a TGT, which the template flag does not establish.
+//
+// CT_FLAG_NO_SECURITY_EXTENSION works by *removing* szOID_NTDS_CA_SECURITY_EXT
+// from the issued certificate, leaving the KDC no SID to bind and forcing the
+// weak UPN mapping the attack spoofs. StrongCertificateBindingEnforcement 0
+// (Disabled) and 1 (Compatibility) both allow that fallback; 2 (Full
+// Enforcement) refuses any certificate it cannot map strongly, so stripping the
+// extension is itself disqualifying. The pass condition is !=2, unlike ESC6's
+// ==0: ESC6 also loses at 1, because its certificate *has* a security extension
+// and a present extension is validated strictly even in Compatibility mode.
+//
+// This gate is independent of the ACL chain, and deliberately so. Enrolling the
+// ESC9 template on staging as an ordinary domain user, with no UPN spoof and no
+// -sid, yielded a certificate with no object SID whose AS-REQ the KDC dropped
+// with event 39 at Error level. Nothing about the UPN-write primitive was in
+// play, so an ESC9 verdict that waits on the ACL chain waits on the wrong
+// blocker.
+func (v *Validator) checkESC9KDCBinding(ctx context.Context, w io.Writer, dcRole string) {
+	b, err := v.readKDCBinding(ctx, dcRole)
+	switch {
+	case err != nil:
+		v.addResult(w, "WARN", "ADCS-ESC9",
+			fmt.Sprintf("Cannot confirm ESC9 is exploitable: %s", err), "")
+	case !b.Present:
+		v.addResult(w, "FAIL", "ADCS-ESC9",
+			fmt.Sprintf("%s %s, which refuses a certificate carrying no SID (ESC9 NOT exploitable); pin it with the adcs_esc10_case1 vuln", b.DCLabel, unpinnedKDCNote), "")
+	case b.Value >= 2:
+		v.addResult(w, "FAIL", "ADCS-ESC9",
+			fmt.Sprintf("StrongCertificateBindingEnforcement=%d on %s refuses a certificate with no SID security extension, which is exactly what CT_FLAG_NO_SECURITY_EXTENSION produces (ESC9 NOT exploitable)", b.Value, b.DCLabel), "")
+	default:
+		v.addResult(w, "PASS", "ADCS-ESC9",
+			fmt.Sprintf("StrongCertificateBindingEnforcement=%d on %s allows the weak UPN mapping an ESC9 certificate needs (ESC9 exploitable)", b.Value, b.DCLabel), "")
 	}
 }
 

@@ -109,13 +109,23 @@ Essos DA via the gMSA→drogon nested-group route and via ADCS. Nesting that mak
 | E3 | ESC2 | ADCS ESC2 (Any-Purpose EKU) | any essos Domain User | cert as DA | `:189` |
 | E4 | ESC3 / ESC3-CRA | ADCS ESC3 (enrollment agent) | any essos Domain User | enroll-on-behalf-of DA | `:189` |
 | E5 | ESC4 | ADCS ESC4 (template DACL) → ESC1 | khal.drogo (`horse`) | reconfigure template → cert as DA | `:318` GenericAll on ESC4 template |
-| E6 | ESC6 | ADCS ESC6 (CA SAN flag) | any essos Domain User | SAN-spoof DA | `vulns_adcs_esc6` sets `EDITF_ATTRIBUTESUBJECTALTNAME2` (`:221`) |
+| E6 | ESC6 | ADCS ESC6 (CA SAN flag) | any essos Domain User | SAN-spoof DA | `vulns_adcs_esc6` sets `EDITF_ATTRIBUTESUBJECTALTNAME2` (`:221`); needs meereen `StrongCertificateBindingEnforcement=0` (`:188`) |
 | E7 | ESC7 | ADCS ESC7 (ManageCA) | viserys.targaryen (`GoldCrown`) | approve/enable → cert as DA | `:191-194` |
-| E8 | ESC9 | ADCS ESC9 (no-security-extension + UPN write) | missandei/khal | UPN-swap → cert as DA | `:189`; write via `:321`/`:323`/`:316` |
+| E8 | ESC9 | ADCS ESC9 (no-security-extension + UPN write) | missandei/khal | UPN-swap → cert as DA | `:189`; write via `:321`/`:323`/`:316`; needs meereen `StrongCertificateBindingEnforcement` ≤ 1 (`:188`) |
 | E9 | ESC11 | ADCS ESC11 (ICertPassage RPC relay) | coercion + relay | DC cert → DCSync | `vulns_adcs_esc11` clears `IF_ENFORCEENCRYPTICERTREQUEST` (`:221`) |
 | E10 | ESC13 | ADCS ESC13 (issuance-policy → group) | any essos Domain User | cert grants `greatmaster` = local admin DC03 → DA | `:196-201`; greatmaster ∈ DC03 Administrators (`:181`) |
 | E11 | ESC15 (EKUwu) | ADCS ESC15 (v1 enrollee-supplies-subject) | any essos Domain User | add client-auth app-policy → cert as DA | `vulns_adcs_esc15` grants Domain Users Enroll on "Web Server" |
 | E12 | ESC8 on ESSOS-CA | ADCS ESC8 (web-enroll relay) | any domain creds + coerce meereen | DC cert → DA | CA on srv03 (`inventory:88-90`); web enroll default true |
+
+**E6 and E8 depend on the essos KDC, not on the CA.** Both authenticate with a
+weakly mapped certificate, so meereen's `StrongCertificateBindingEnforcement`
+decides them: 0 for E6 (its certificate carries the requester's SID, which
+Compatibility mode still validates), 0 or 1 for E8 (its certificate carries no
+SID at all). The value is unset by default and, since KB5014754 in February
+2025, an unset value means Full Enforcement, which closes both. GOAD therefore
+pins it on meereen via `adcs_esc10_case1` (`:188`). The pin on kingslanding
+(`:22`) does not help here: it is a different forest, with no CA and no
+vulnerable templates to enrol against.
 
 **E1 routes to braavos local admin** (→ SYSTEM → read gmsaDragon$ → control drogon): khal.drogo direct local admin (`:213`) and MSSQL sysadmin (`:226-227`); jorah.mormont LAPS reader (`:254-257`); `DragonsFriends → GenericWrite braavos$`→ RBCD (`:320`).
 
@@ -183,7 +193,7 @@ Counting rule: one row per genuinely distinct provisioned artifact **or** distin
 
 **F — Delegation (3):** sansa unconstrained (`unconstrained_delegation_user.ps1`); jon.snow constrained use-any-protocol (`constrained_delegation_use_any.ps1`); jon.snow constrained kerberos-only (`constrained_delegation_kerb_only.ps1`).
 
-**G — ADCS (59):** **49** = 7 any-user templates (ESC1, ESC2, ESC3, ESC3-CRA, ESC6, ESC13, ESC15) × 7 named essos users (daenerys, viserys, khal.drogo, jorah.mormont, missandei, drogon, sql_svc) (`:188-189`, `:221`, `:325-389`); + ESC4 (khal only, `:318`); + ESC7 (viserys only, `:191-194`); + ESC9 (4 write-holders: khal, missandei, Spys, viserys; `:316-323`); + ESC8 braavos relay (1); + ESC11 braavos relay (1); + ESC10 dc01 case1+case2 (2, `:22`).
+**G — ADCS (59):** **49** = 7 any-user templates (ESC1, ESC2, ESC3, ESC3-CRA, ESC6, ESC13, ESC15) × 7 named essos users (daenerys, viserys, khal.drogo, jorah.mormont, missandei, drogon, sql_svc) (`:188-189`, `:221`, `:325-389`); + ESC4 (khal only, `:318`); + ESC7 (viserys only, `:191-194`); + ESC9 (4 write-holders: khal, missandei, Spys, viserys; `:316-323`); + ESC8 braavos relay (1); + ESC11 braavos relay (1); + ESC10 dc01 case1+case2 (2, `:22`). ESC10 case 1 is also pinned on meereen (`:188`), which is what keeps E6 and E8 alive at all; its essos abuse paths reuse the same four UPN-write holders already counted under ESC9, so the total is unchanged.
 
 **H — Trusts (7):** child→parent golden+ExtraSID 519, child→parent inter-realm TGT, raiseChild.py one-shot (`:392-540`, trust `:396`); tyron→DragonsFriends→essos (`:298-302`); daenerys→AcrossTheNarrowSea→kingslanding$ (`:587-591`, `:601`); Small Council→Spys→jorah (`:303-305`, `:317`); daenerys→DragonsFriends→braavos$ (`:299-302`, `:320`).
 
