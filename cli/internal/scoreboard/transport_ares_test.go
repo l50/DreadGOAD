@@ -64,13 +64,13 @@ func TestAresCategoryToTechniqueID(t *testing.T) {
 		{"esc8 credits", "adcs_esc8", "adcs_esc8"},
 		{"long esc form is distinct", "adcs_esc10_case1", "adcs_esc10_case1"},
 		{"nopac credits after ares #366", "nopac", "nopac"},
+		{"printnightmare credits after ares #367", "printnightmare", "printnightmare"},
 
 		// The one name that differs between the two vocabularies.
 		{"forest_trust aliases to cross_forest_trust", "forest_trust", "cross_forest_trust"},
 
-		// Refusals: ares mints these on evidence that precedes success, so
-		// crediting them would score an attempt as an exploit.
-		{"printnightmare refused", "printnightmare", ""},
+		// Refusal: ares runs only the nxc check module, never the password
+		// reset, so crediting it would score a scan as an exploit.
 		{"zerologon refused", "zerologon", ""},
 
 		// Flat in ares, per-domain in the answer key; credited from
@@ -139,10 +139,9 @@ func TestEveryAresCategoryIsClassified(t *testing.T) {
 // rather than added to silence a failing run.
 func TestUncreditableCategoriesAreDeliberate(t *testing.T) {
 	want := map[string]bool{
-		"other":          true,
-		"golden_ticket":  true,
-		"printnightmare": true,
-		"zerologon":      true,
+		"other":         true,
+		"golden_ticket": true,
+		"zerologon":     true,
 	}
 	if !reflect.DeepEqual(uncreditableCategories, want) {
 		t.Errorf("uncreditableCategories = %v, want %v; a new refusal needs its rationale in the doc comment",
@@ -196,7 +195,7 @@ func TestDetectTokenCoverageDrift(t *testing.T) {
 		},
 		{
 			name:     "deliberate refusals are exempt",
-			coverage: cov("other", 5, "golden_ticket", 2, "printnightmare", 1, "zerologon", 1),
+			coverage: cov("other", 5, "golden_ticket", 2, "zerologon", 1),
 			want:     nil,
 		},
 		{
@@ -268,12 +267,20 @@ func TestWriteTokenCoverageEntries(t *testing.T) {
 		{
 			name: "refusals never credit",
 			coverage: map[string]aresTokenBucket{
-				"printnightmare": {Exploited: 3},
-				"zerologon":      {Exploited: 1},
-				"golden_ticket":  {Exploited: 2},
-				"other":          {Exploited: 9},
+				"zerologon":     {Exploited: 1},
+				"golden_ticket": {Exploited: 2},
+				"other":         {Exploited: 9},
 			},
-			absent: []string{"tech:printnightmare", "tech:zerologon", "tech:golden_ticket", "tech:other"},
+			absent: []string{"tech:zerologon", "tech:golden_ticket", "tech:other"},
+		},
+		{
+			// Refused alongside zerologon until ares-cli #367 rebuilt its gate
+			// on a marker the PoC actually prints.
+			name: "printnightmare credits after ares gate fix",
+			coverage: map[string]aresTokenBucket{
+				"printnightmare": {Exploited: 3},
+			},
+			want: []string{"tech:printnightmare"},
 		},
 		{
 			name:     "alias is credited under the answer-key id",
