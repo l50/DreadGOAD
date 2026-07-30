@@ -213,6 +213,14 @@
           "ntlmdowngrade",
           "disable_firewall"
         ],
+        "vulns_adcs_templates": [
+          "ESC1",
+          "ESC2",
+          "ESC3",
+          "ESC3-CRA",
+          "ESC4",
+          "ESC9"
+        ],
         "security": [
           "audit_policy"
         ]
