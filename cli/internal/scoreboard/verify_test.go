@@ -209,7 +209,7 @@ func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 			},
 		},
 	}
-	jsonl := synthesizeJSONL(loot, nil)
+	jsonl := synthesizeJSONL(loot)
 	report := ParseReport(jsonl)
 
 	owned := domainsFromKrbtgt(report.Findings)
@@ -265,8 +265,11 @@ func TestVerifyDomainCompromiseWithoutGoldenTicket(t *testing.T) {
 				AdminUsers:      []string{"administrator"},
 			},
 		},
+		TokenCoverage: map[string]aresTokenCoverage{
+			"adcs_esc1": {Discovered: 1, Exploited: 1, Status: "ok"},
+		},
 	}
-	report := ParseReport(synthesizeJSONL(loot, []string{"adcs_esc1_10.1.2.254"}))
+	report := ParseReport(synthesizeJSONL(loot))
 	status := VerifyReport(report, ak)
 	verified := verifiedObjectiveIDs(status)
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	awsclient "github.com/dreadnode/dreadgoad/internal/aws"
@@ -48,11 +49,28 @@ func NewAresTransport(ctx context.Context, instanceID, binaryPath, region, profi
 }
 
 type aresLoot struct {
-	OperationID      string                 `json:"operation_id"`
-	StartedAt        string                 `json:"started_at"`
-	Credentials      []aresCredEntry        `json:"credentials"`
-	Hashes           []aresHashEntry        `json:"hashes"`
-	DomainCompromise []aresDomainCompromise `json:"domain_compromise"`
+	OperationID      string                       `json:"operation_id"`
+	StartedAt        string                       `json:"started_at"`
+	Credentials      []aresCredEntry              `json:"credentials"`
+	Hashes           []aresHashEntry              `json:"hashes"`
+	DomainCompromise []aresDomainCompromise       `json:"domain_compromise"`
+	TokenCoverage    map[string]aresTokenCoverage `json:"token_coverage"`
+}
+
+// aresTokenCoverage mirrors one entry of the ares loot JSON's `token_coverage`
+// map, which ares emits keyed by scoreboard category (`ares-cli`
+// `ops/loot/format/json.rs`, `build_token_coverage_json`). Its doc comment
+// names the dreadgoad scoreboard verifier as an intended consumer, precisely so
+// downstream stops re-deriving category mapping from raw `vuln_id` strings.
+//
+// `Exploited` is proven-only: ares subtracts its superseded set before
+// counting, so back-credited techniques (a goal another path already reached)
+// do not inflate it. That subtraction is what lets DreadGOAD drop its own
+// `SDIFF exploited superseded` round-trip against Redis.
+type aresTokenCoverage struct {
+	Discovered int    `json:"discovered"`
+	Exploited  int    `json:"exploited"`
+	Status     string `json:"status"`
 }
 
 type aresCredEntry struct {
@@ -85,13 +103,18 @@ type aresDomainCompromise struct {
 	KrbtgtHashTypes []string `json:"krbtgt_hash_types"`
 }
 
-// FetchReport runs `ares ops loot --latest --json` on the remote instance and,
-// if successful, also fetches the proven subset of the `ares:op:<id>:exploited`
-// Redis set so technique objectives can be credited directly. Both payloads are
+// FetchReport runs `ares ops loot --latest --json` on the remote instance and
+// translates the result into synthetic JSONL findings. The payload is
 // gzip+base64-encoded to sidestep SSM's 24KB stdout cap. Returns ErrNoReport
 // when the operation hasn't produced any state yet.
+//
+// Technique credit comes from `token_coverage`, which ares computes with its
+// own category mapping and its own superseded subtraction. Reading it replaces
+// both the second Redis round-trip and the hand-maintained prefix table that
+// used to translate raw `vuln_id` strings here, so the two sides can no longer
+// drift apart on category naming.
 func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
-	const jqFilter = `{operation_id, started_at,` +
+	const jqFilter = `{operation_id, started_at, token_coverage,` +
 		` credentials: [.credentials[] | {username, password, domain, is_admin}],` +
 		` hashes: [.hashes[] | {username, domain, hash_value, hash_type, source}],` +
 		` domain_compromise: [.domain_compromise[] | {domain, has_domain_admin, has_golden_ticket, admin_users, krbtgt_hash_types}]}`
@@ -120,41 +143,7 @@ func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("parse ares loot json: %w", err)
 	}
 
-	exploited := t.fetchExploited(ctx, loot.OperationID)
-	return synthesizeJSONL(&loot, exploited), nil
-}
-
-// fetchExploited reads the `ares:op:<op>:exploited` Redis set minus
-// `ares:op:<op>:superseded`; failures are non-fatal (just means no technique
-// findings get emitted this poll).
-//
-// ares credits a vuln as exploited when a *different* path already reached the
-// same goal, so the technique itself was never proven: an mssql_impersonation
-// win back-credits the host's mssql_access, and a dc_secretsdump_<domain>
-// back-credits child_to_parent for that domain (ares-cli
-// `orchestrator/state/dedup.rs`). Those ids are mirrored into `:superseded`,
-// which ares documents as "subset of KEY_EXPLOITED; the technique itself was
-// never proven to work". SDIFF drops them server-side and degrades to plain
-// SMEMBERS when `:superseded` is absent, so the scoreboard only credits
-// techniques ares actually walked.
-func (t *AresTransport) fetchExploited(ctx context.Context, opID string) []string {
-	if opID == "" {
-		return nil
-	}
-	cmd := fmt.Sprintf("redis-cli SDIFF %s %s",
-		shellQuote(fmt.Sprintf("ares:op:%s:exploited", opID)),
-		shellQuote(fmt.Sprintf("ares:op:%s:superseded", opID)))
-	out, status, _, err := runSSMShell(ctx, t.Client, t.InstanceID, cmd)
-	if err != nil || status != ssmtypes.CommandInvocationStatusSuccess {
-		return nil
-	}
-	var entries []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			entries = append(entries, line)
-		}
-	}
-	return entries
+	return synthesizeJSONL(&loot), nil
 }
 
 func decodeGzipBase64(s string) ([]byte, error) {
@@ -184,71 +173,7 @@ func (t *AresTransport) DeleteReport(_ context.Context) (bool, error) {
 	return false, nil
 }
 
-// aresExploitedToTechniqueIDs maps an entry from `ares:op:<id>:exploited` to
-// the answer-key technique IDs it represents. Returns nil for entries that
-// don't correspond to any answer-key technique. The exploited set uses prefix
-// names like `mssql_linked_server_<ip>_<svc>` or bare names like
-// `constrained_delegation_<user>`; we match on the prefix.
-func aresExploitedToTechniqueIDs(entry string) []string {
-	prefixes := []struct {
-		prefix string
-		ids    []string
-	}{
-		{"mssql_linked_server_", []string{"mssql_linked_server"}},
-		{"mssql_impersonation_", []string{"mssql_exploit"}},
-		{"mssql_", []string{"mssql_exploit"}},
-		{"constrained_delegation_", []string{"constrained_delegation"}},
-		{"unconstrained_delegation_", []string{"unconstrained_delegation"}},
-		{"forest_trust_", []string{"cross_forest_trust"}},
-		{"child_to_parent_", []string{"child_to_parent"}},
-		// ares emits the granted right in the id (acl_genericall_*,
-		// acl_writeproperty_*, ...); they all collapse to one objective.
-		{"acl_", []string{"acl_abuse"}},
-		{"asrep_roast_", []string{"asrep_roast"}},
-		{"kerberoast_", []string{"kerberoast"}},
-		{"llmnr_", []string{"llmnr_nbtns_poisoning"}},
-		{"ntlm_relay_", []string{"ntlm_relay"}},
-		{"ntlmv1_", []string{"ntlmv1_downgrade"}},
-		{"seimpersonate_", []string{"seimpersonate"}},
-		{"adcs_esc1_", []string{"adcs_esc1"}},
-		{"adcs_esc2_", []string{"adcs_esc2"}},
-		{"adcs_esc3_", []string{"adcs_esc3"}}, // collapses ESC3 + ESC3-CRA
-		{"adcs_esc4_", []string{"adcs_esc4"}},
-		{"adcs_esc6_", []string{"adcs_esc6"}},
-		{"adcs_esc7_", []string{"adcs_esc7"}},
-		{"adcs_esc8_", []string{"adcs_esc8"}},
-		{"adcs_esc9_", []string{"adcs_esc9"}},
-		{"adcs_esc10_case1_", []string{"adcs_esc10_case1"}},
-		{"adcs_esc10_case2_", []string{"adcs_esc10_case2"}},
-		{"adcs_esc11_", []string{"adcs_esc11"}},
-		{"adcs_esc13_", []string{"adcs_esc13"}},
-		{"adcs_esc15_", []string{"adcs_esc15"}},
-		// Same shape as acl_: ares emits gpo_<right>_<source>_<gpo-slug>.
-		{"gpo_", []string{"gpo_abuse"}},
-		{"gmsa_", []string{"gmsa_password_read"}},
-		{"laps_", []string{"laps_password_read"}},
-		{"sid_history_", []string{"sid_history_abuse"}},
-		{"rbcd_", []string{"rbcd"}},
-		{"shadow_credentials_", []string{"shadow_credentials"}},
-	}
-	// Per-domain golden ticket: `golden_ticket_<domain>` → `golden_ticket-<domain>`.
-	// One scoreboard objective per domain because forging requires that domain's
-	// krbtgt hash; a multi-domain forest can have a separate GT per domain.
-	if strings.HasPrefix(entry, "golden_ticket_") {
-		domain := strings.ToLower(strings.TrimPrefix(entry, "golden_ticket_"))
-		if domain != "" {
-			return []string{"golden_ticket-" + domain}
-		}
-	}
-	for _, p := range prefixes {
-		if strings.HasPrefix(entry, p.prefix) || entry == strings.TrimSuffix(p.prefix, "_") {
-			return p.ids
-		}
-	}
-	return nil
-}
-
-func synthesizeJSONL(l *aresLoot, exploited []string) string {
+func synthesizeJSONL(l *aresLoot) string {
 	var b strings.Builder
 	writeJSONLEntry(&b, map[string]string{
 		"agent_id":   "ares:" + l.OperationID,
@@ -261,7 +186,7 @@ func synthesizeJSONL(l *aresLoot, exploited []string) string {
 		writeHashEntry(&b, h)
 	}
 	emitted := map[string]bool{}
-	writeExploitedEntries(&b, exploited, emitted)
+	writeTokenCoverageEntries(&b, l.TokenCoverage, emitted)
 	writeDomainCompromiseEntries(&b, l.DomainCompromise, emitted)
 	return b.String()
 }
@@ -310,19 +235,67 @@ func writeHashEntry(b *strings.Builder, h aresHashEntry) {
 	})
 }
 
-func writeExploitedEntries(b *strings.Builder, exploited []string, emitted map[string]bool) {
-	for _, ex := range exploited {
-		for _, techID := range aresExploitedToTechniqueIDs(ex) {
-			if emitted[techID] {
-				continue
-			}
-			emitted[techID] = true
-			writeJSONLEntry(b, map[string]string{
-				"target":      "tech:" + techID,
-				"evidence":    "ares: " + ex,
-				"description": "exploited",
-			})
+// aresCategoryToTechniqueID translates an ares `token_coverage` category key to
+// the answer-key technique ID it credits, or "" for categories the scoreboard
+// deliberately does not credit.
+//
+// ares already normalises most aliases to the scoreboard's own names in
+// `token_category` (`gpo`→`gpo_abuse`, `mssql_impersonation`→`mssql_exploit`,
+// `ntlmv1`→`ntlmv1_downgrade`, `llmnr`→`llmnr_nbtns_poisoning`,
+// `sid_history`→`sid_history_abuse`, `gmsa`/`laps`→`*_password_read`), so the
+// vast majority pass through untouched. Only the exceptions below need stating,
+// and each one is a real disagreement rather than a naming preference.
+func aresCategoryToTechniqueID(category string) string {
+	switch category {
+	case "forest_trust":
+		// ares has no normalisation arm for this one, so it emits the bare
+		// prefix while the answer key declares `cross_forest_trust`. Passing it
+		// through unchanged silently drops the objective.
+		return "cross_forest_trust"
+	case "zerologon":
+		// ares mints a zerologon id from the nxc *check* module and never runs
+		// the password reset, so the id records a detection rather than an
+		// exploit. Crediting it would flip an objective nothing exercised.
+		return ""
+	case "golden_ticket":
+		// ares collapses `golden_ticket_<domain>` to a single bare category,
+		// discarding the domain. The answer key declares one objective per
+		// domain because forging needs that domain's krbtgt hash, so these are
+		// credited from `domain_compromise[]` instead, which keeps the domain.
+		return ""
+	case "other":
+		// token_category's catch-all for ids it does not recognise.
+		return ""
+	default:
+		return category
+	}
+}
+
+// writeTokenCoverageEntries credits one technique objective per ares category
+// with at least one proven exploit. Categories are walked in sorted order so
+// the synthesized JSONL is byte-stable across polls of unchanged state.
+func writeTokenCoverageEntries(b *strings.Builder, coverage map[string]aresTokenCoverage, emitted map[string]bool) {
+	categories := make([]string, 0, len(coverage))
+	for c := range coverage {
+		categories = append(categories, c)
+	}
+	sort.Strings(categories)
+
+	for _, category := range categories {
+		cov := coverage[category]
+		if cov.Exploited <= 0 {
+			continue
 		}
+		techID := aresCategoryToTechniqueID(category)
+		if techID == "" || emitted[techID] {
+			continue
+		}
+		emitted[techID] = true
+		writeJSONLEntry(b, map[string]string{
+			"target":      "tech:" + techID,
+			"evidence":    fmt.Sprintf("ares: token_coverage %s exploited=%d discovered=%d", category, cov.Exploited, cov.Discovered),
+			"description": "exploited",
+		})
 	}
 }
 
