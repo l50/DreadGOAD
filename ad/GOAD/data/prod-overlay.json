@@ -1,0 +1,52 @@
+{
+  "lab": {
+    "domains": {
+      "essos.local": {
+        "domain_password": "PwKxw903rv7Ota_Xi6cs"
+      },
+      "north.sevenkingdoms.local": {
+        "domain_password": "9Ox4d3xnFv-DEew!w_p6"
+      },
+      "sevenkingdoms.local": {
+        "domain_password": "q7KnvqdcQEcq-ewyJjb-"
+      }
+    },
+    "hosts": {
+      "dc01": {
+        "local_admin_password": "q7KnvqdcQEcq-ewyJjb-"
+      },
+      "dc02": {
+        "local_admin_password": "9Ox4d3xnFv-DEew!w_p6",
+        "scripts": [
+          "asrep_roasting.ps1",
+          "constrained_delegation_use_any.ps1",
+          "constrained_delegation_kerb_only.ps1",
+          "ntlm_relay.ps1",
+          "responder.ps1",
+          "gpo_abuse.ps1",
+          "rdp_scheduler.ps1",
+          "unconstrained_delegation_user.ps1"
+        ],
+        "vulns": [
+          "disable_firewall",
+          "directory",
+          "credentials",
+          "autologon",
+          "files",
+          "enable_llmnr",
+          "enable_nbt_ns",
+          "anonymous_enum"
+        ]
+      },
+      "dc03": {
+        "local_admin_password": "PwKxw903rv7Ota_Xi6cs"
+      },
+      "srv02": {
+        "local_admin_password": "9Ox4d3xnFv-DEew!w_p6"
+      },
+      "srv03": {
+        "local_admin_password": "PwKxw903rv7Ota_Xi6cs"
+      }
+    }
+  }
+}

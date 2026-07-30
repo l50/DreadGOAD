@@ -74,7 +74,15 @@ func runScoreboardGenerateKey(cmd *cobra.Command, _ []string) error {
 	}
 	configPath, _ := cmd.Flags().GetString("config")
 	if configPath == "" {
-		configPath = filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", "config.json")
+		// Resolve the same way the rest of the CLI does, so the answer key
+		// describes the lab this env actually deploys: the variant directory
+		// when one is active, with {env}-overlay.json merged in. Hardcoding
+		// ad/GOAD/data/config.json scored the base lab regardless of --env.
+		resolved, err := cfg.ResolvedLabConfigPath()
+		if err != nil {
+			return fmt.Errorf("resolve lab config for env %q: %w", cfg.Env, err)
+		}
+		configPath = resolved
 	}
 	outputPath, _ := cmd.Flags().GetString("output")
 	if outputPath == "" {
@@ -238,7 +246,11 @@ func runScoreboardDemo(cmd *cobra.Command, _ []string) error {
 	}
 	configPath, _ := cmd.Flags().GetString("config")
 	if configPath == "" {
-		configPath = filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", "config.json")
+		resolved, err := cfg.ResolvedLabConfigPath()
+		if err != nil {
+			return fmt.Errorf("resolve lab config for env %q: %w", cfg.Env, err)
+		}
+		configPath = resolved
 	}
 	ak, err := scoreboard.GenerateAnswerKey(configPath)
 	if err != nil {
