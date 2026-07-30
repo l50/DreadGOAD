@@ -4,22 +4,6 @@
       "essos.local": {
         "acls": {
           "GenericWrite_missandei_viserys": null
-        },
-        "groups": {
-          "global": {
-            "Domain Admins": {
-              "managed_by": "Administrator"
-            },
-            "Dragons": {
-              "managed_by": "Administrator"
-            },
-            "QueenProtector": {
-              "managed_by": "Administrator"
-            }
-          },
-          "universal": {
-            "greatmaster": null
-          }
         }
       }
     },
@@ -55,11 +39,6 @@
         ]
       },
       "dc03": {
-        "local_groups": {
-          "Administrators": [
-            "essos\\daenerys.targaryen"
-          ]
-        },
         "vulns": [
           "ntlmdowngrade",
           "disable_firewall",
