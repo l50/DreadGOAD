@@ -1,7 +1,7 @@
 # DreadGOAD CLI Configuration
 env: prod
 provider: aws  # Provider: aws, azure, proxmox, ludus
-region: us-east-1  # Override AWS region (default: from inventory)
+region: us-east-1  # Fallback AWS region for environments that don't set their own
 instance_profile: WarpgateImageBuilderInstanceProfile  # IAM instance profile for EC2 Image Builder
 debug: false
 max_retries: 3
@@ -55,14 +55,17 @@ environments:
     # variant: true here makes provision/ad-users generate a fresh random identity
     # and silently repoint the env at it, so playbooks target a lab that does not exist.
     variant: false
+    region: us-west-1
     vpc_cidr: "10.1.0.0/16"
   prod:
+    region: us-east-1
     vpc_cidr: "10.2.0.0/16"
   test:
     variant: true
     variant_source: ad/GOAD
     variant_target: ad/GOAD-dreadindex
     variant_name: dreadindex
+    region: us-east-2
     vpc_cidr: "10.8.0.0/16"
   dreadindex:
     variant: true
