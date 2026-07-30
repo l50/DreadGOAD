@@ -1,8 +1,8 @@
 $task = '/c powershell c:\setup\bot_rdp.ps1'
 $repeat = (New-TimeSpan -Minutes 1)
 $taskName = "connect_bot"
-$user = "hq\catherine2.ramos"
-$password = "plyfvjuqn"
+$user = "cloud\donna.nelson"
+$password = "xdbxessal"
 $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "$task"
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval $repeat
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable -DontStopOnIdleEnd

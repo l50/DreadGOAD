@@ -1,1 +1,1 @@
-Get-ADUser -Identity "ryan.myers" | Set-ADAccountControl -TrustedForDelegation $true
+Get-ADUser -Identity "samantha.lewis" | Set-ADAccountControl -TrustedForDelegation $true

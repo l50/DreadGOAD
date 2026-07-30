@@ -1,6 +1,8 @@
 ---
-# Diagnostic playbook to check dc01 (guardian-app) status from another host
-# Run against dc03 or srv03 (vortexindustries.local) which are independent of deltasystems.local
+# Diagnostic playbook to check dc01's status from another host.
+# Run against dc03 or srv03, which sit in the second forest and so do not depend
+# on dc01 being reachable. Host and domain names are read from the lab config
+# rather than hardcoded, so this works for GOAD and for any generated variant.
 #
 # Usage:
 #   # First, ensure the AWS mapping file exists:
@@ -33,13 +35,13 @@
         instance_to_ip: "{{ aws_mapping.instance_to_ip | default({}) }}"
       when: aws_mapping is defined
 
-- name: Diagnose dc01 (deltasystems.local DC) from remote host
+- name: Diagnose dc01 from remote host
   hosts: dc03,srv03
   gather_facts: false
   vars:
     target_dc: "{{ hostvars['dc01']['ansible_host'] }}"
-    target_hostname: "guardian-app"
-    target_domain: "deltasystems.local"
+    target_hostname: "{{ lab.hosts.dc01.hostname }}"
+    target_domain: "{{ lab.hosts.dc01.domain }}"
     # Get dc01's IP - can be overridden with -e dc01_ip=x.x.x.x
     dc01_ip: "{{ dc01_ip_override | default(instance_to_ip[target_dc] | default('')) }}"
 
@@ -219,31 +221,31 @@
           WinRM HTTP (5985): {{ winrm_test.result.winrm_test }}
           WinRM HTTPS (5986): {{ winrm_test.result.winrm_https }}
 
-    - name: Check if this host can resolve deltasystems.local
+    - name: Check if this host can resolve the target domain
       ansible.windows.win_powershell:
         script: |
           $ProgressPreference = 'SilentlyContinue'
 
           $results = @{
               current_dns_servers = (Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses } | Select-Object -ExpandProperty ServerAddresses) -join ", "
-              resolve_deltasystems = $null
-              resolve_guardian_app = $null
+              resolve_domain = $null
+              resolve_dc_host = $null
           }
 
-          # Try to resolve deltasystems.local
+          # Try to resolve the target domain
           try {
-              $dns = Resolve-DnsName -Name "deltasystems.local" -ErrorAction Stop
-              $results.resolve_deltasystems = "SUCCESS - $($dns.IPAddress -join ', ')"
+              $dns = Resolve-DnsName -Name "{{ target_domain }}" -ErrorAction Stop
+              $results.resolve_domain = "SUCCESS - $($dns.IPAddress -join ', ')"
           } catch {
-              $results.resolve_deltasystems = "FAILED - $($_.Exception.Message)"
+              $results.resolve_domain = "FAILED - $($_.Exception.Message)"
           }
 
-          # Try to resolve guardian-app.deltasystems.local
+          # Try to resolve the DC's own FQDN
           try {
-              $dns = Resolve-DnsName -Name "guardian-app.deltasystems.local" -ErrorAction Stop
-              $results.resolve_guardian_app = "SUCCESS - $($dns.IPAddress -join ', ')"
+              $dns = Resolve-DnsName -Name "{{ target_hostname }}.{{ target_domain }}" -ErrorAction Stop
+              $results.resolve_dc_host = "SUCCESS - $($dns.IPAddress -join ', ')"
           } catch {
-              $results.resolve_guardian_app = "FAILED - $($_.Exception.Message)"
+              $results.resolve_dc_host = "FAILED - $($_.Exception.Message)"
           }
 
           $Ansible.Result = $results
@@ -256,14 +258,14 @@
         msg: |
           === DNS RESOLUTION FROM {{ inventory_hostname }} ===
           Current DNS Servers: {{ dns_from_here.result.current_dns_servers }}
-          Resolve deltasystems.local: {{ dns_from_here.result.resolve_deltasystems }}
-          Resolve guardian-app.deltasystems.local: {{ dns_from_here.result.resolve_guardian_app }}
+          Resolve {{ target_domain }}: {{ dns_from_here.result.resolve_domain }}
+          Resolve {{ target_hostname }}.{{ target_domain }}: {{ dns_from_here.result.resolve_dc_host }}
 
     - name: Summary and recommendations
       ansible.builtin.debug:
         msg: |
           ===============================================
-          DIAGNOSTIC SUMMARY FOR DC01 (guardian-app)
+          DIAGNOSTIC SUMMARY FOR DC01 ({{ target_hostname }})
           ===============================================
 
           Based on the tests above, check:

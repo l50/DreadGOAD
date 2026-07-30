@@ -927,7 +927,10 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 				g.fixPasswords(&configData)
 				g.rebuildACLKeys(&configData)
 				if pretty, err := json.MarshalIndent(configData, "", "  "); err == nil {
-					newContent = string(pretty)
+					// MarshalIndent omits the trailing newline that the source
+					// files carry and that pre-commit's end-of-file-fixer
+					// requires, so re-add it.
+					newContent = string(pretty) + "\n"
 				}
 			}
 		}
@@ -997,6 +1000,9 @@ func (g *Generator) saveMappings() error {
 	if err != nil {
 		return err
 	}
+	// MarshalIndent omits the trailing newline pre-commit's end-of-file-fixer
+	// requires, so re-add it.
+	data = append(data, '\n')
 	outPath := filepath.Join(g.TargetPath, "mapping.json")
 	fmt.Printf("Mappings saved to %s\n", outPath)
 	return os.WriteFile(outPath, data, 0o644)

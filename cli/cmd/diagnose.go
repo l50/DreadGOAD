@@ -18,8 +18,10 @@ var diagnoseCmd = &cobra.Command{
 	Long: `Runs the diagnose-dc01 playbook from an independent host to verify
 network connectivity, LDAP, WinRM, and DNS for the primary domain controller.
 
-Diagnostics run from dc03/srv03 (vortexindustries domain) to test dc01
-(deltasystems domain) connectivity with detailed troubleshooting output.`,
+Diagnostics run from dc03/srv03, which sit in the second forest and so do not
+depend on dc01, and test connectivity to dc01 with detailed troubleshooting
+output. Target host and domain names come from the lab config, so this works
+for GOAD and for any generated variant.`,
 	Example: `  dreadgoad diagnose
   dreadgoad diagnose --dc01-ip 10.0.1.10
   dreadgoad diagnose --env staging --debug`,

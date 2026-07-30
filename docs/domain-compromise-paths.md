@@ -10,7 +10,25 @@ Everything here is derived strictly from the lab's provisioning, **not** generic
 - `ansible/roles/vulns_*` and `ansible/roles/adcs_templates/tasks/main.yml` — vulnerable-config roles and template publishing
 - `ansible/playbooks/adcs.yml` — CA web-enrollment defaults
 
-> **Variant deployments:** if deployed with `variant: true`, every credential, SPN, ACL edge, and template ACL is randomized — re-read `ad/GOAD-variant-1/data/config.json` (e.g. domains `deltasystems.local` / `vortexindustries.local`). The path **graph is isomorphic** and the counts below hold, but all names/passwords differ.
+> **Variant deployments:** if deployed with `variant: true`, every credential, SPN, ACL edge, and template ACL is randomized. Re-read the variant's own `data/config.json` for the live names, and `mapping.json` for the old-to-new translation. Specific names are deliberately not quoted here, since each regeneration produces a fresh identity. The path **graph is isomorphic** and the counts below hold, but all names and passwords differ.
+
+## At a glance
+
+The lab's vulnerabilities form a web rather than a single chain, so a red agent can
+reach domain compromise by many different routes. Three of them, highlighted:
+
+![One goal, a different path every run: initial access fanning out through LLMNR
+poisoning, Kerberoasting, AS-REP roasting, password spray, PetitPotam, NTLM relay,
+hash cracking, shadow credentials, DCSync, ADCS ESC1, RBCD, and golden ticket, all
+converging on domain compromise](moving-target-attack-paths.png)
+
+The same three routes as concrete kill chains against the stock GOAD names, each
+step tagged with its MITRE technique ID, converging on Domain Admin, then a golden
+ticket, then forest compromise:
+
+![Paths to Domain Admin across three DreadGOAD runs: run 1 LLMNR poison to hash
+crack to PsExec to DCSync; run 2 LDAP enum to AS-REP roast to shadow credentials to
+ESC7 forge; run 3 service scan to PetitPotam to NTLM relay to DCSync](paths-to-domain-admin.png)
 
 ## Lab topology recap
 
