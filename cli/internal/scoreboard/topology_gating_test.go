@@ -86,4 +86,65 @@ func TestTopologyGatedTechniques(t *testing.T) {
 			}
 		}
 	})
+
+	// ESC6 and ESC9 need a KDC that will accept a weak certificate mapping, and
+	// both labs now pin StrongCertificateBindingEnforcement=0 in the domain that
+	// owns the CA and the templates. Before that pin the routes were dead on a
+	// patched lab while the answer key still demanded them.
+	for _, lab := range []string{"GOAD", "GOAD-variant-1"} {
+		t.Run("kdc_bound_adcs/"+lab, func(t *testing.T) {
+			techs := techniqueSet(t, lab)
+			for _, id := range []string{"adcs_esc6", "adcs_esc9"} {
+				if !techs[id] {
+					t.Errorf("%s pins a weak KDC binding in its CA domain but lost %q", lab, id)
+				}
+			}
+		})
+	}
+}
+
+// A weak binding pinned in some other domain does not make ESC6 or ESC9
+// reachable. This is the exact GOAD shape that hid the problem: the permissive
+// KDC sat in a forest with nothing to enrol against, so any lab-wide check for
+// one read as green.
+func TestADCSTechniquesGatedOnSameDomainKDCPin(t *testing.T) {
+	hosts := map[string]any{
+		"dc01": map[string]any{
+			"domain": "sevenkingdoms.local",
+			"vulns":  []any{"adcs_esc10_case1"},
+		},
+		"dc03": map[string]any{
+			"domain":               "essos.local",
+			"vulns_adcs_templates": []any{"ESC1", "ESC9"},
+		},
+		"srv03": map[string]any{
+			"domain": "essos.local",
+			"vulns":  []any{"adcs_esc6"},
+		},
+	}
+
+	collect := func(hosts map[string]any) map[string]bool {
+		got := map[string]bool{}
+		addHostTechniques(hosts, func(id, _, _ string) { got[id] = true })
+		return got
+	}
+
+	techs := collect(hosts)
+	if !techs["adcs_esc1"] {
+		t.Error("adcs_esc1 does not depend on the KDC binding and must still be credited")
+	}
+	for _, id := range []string{"adcs_esc6", "adcs_esc9"} {
+		if techs[id] {
+			t.Errorf("%s credited with the only KDC pin in another domain", id)
+		}
+	}
+
+	// Move the pin into the domain that holds the CA and both come back.
+	hosts["dc03"].(map[string]any)["vulns"] = []any{"adcs_esc10_case1"}
+	techs = collect(hosts)
+	for _, id := range []string{"adcs_esc6", "adcs_esc9"} {
+		if !techs[id] {
+			t.Errorf("%s not credited despite a weak KDC binding in its own domain", id)
+		}
+	}
 }

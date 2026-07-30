@@ -408,10 +408,11 @@ func addKerberosTechniques(domains map[string]any, asrep map[string][]string, ad
 }
 
 func addHostTechniques(hosts map[string]any, add techniqueAdd) {
+	weakKDC := weakCertBindingDomains(hosts)
 	for _, hRaw := range hosts {
 		h, _ := hRaw.(map[string]any)
 		addNetworkTechniques(h, add)
-		addAdcsTechniques(h, add)
+		addAdcsTechniques(h, weakKDC, add)
 		addMssqlTechniques(h, add)
 		addDelegationTechniques(h, add)
 		addPrivescTechniques(h, add)
@@ -435,10 +436,54 @@ func addNetworkTechniques(h map[string]any, add techniqueAdd) {
 	}
 }
 
-func addAdcsTechniques(h map[string]any, add techniqueAdd) {
+// kdcBoundADCSTechniques are the ADCS techniques whose exploitability rests on
+// the KDC accepting a weak certificate mapping, not on the CA-side or
+// template-side flag the config records.
+//
+// ESC6 injects a SAN into a certificate that still carries the *requester's*
+// SID, and ESC9 strips the SID extension outright. Neither survives a KDC that
+// insists on a strong mapping, and since KB5014754 (Feb 2025) the built-in
+// default is Full Enforcement. So the flag alone stopped implying an achievable
+// objective: the lab now has to pin the KDC as well.
+var kdcBoundADCSTechniques = map[string]bool{
+	"adcs_esc6": true,
+	"adcs_esc9": true,
+}
+
+// weakCertBindingDomains returns the domains whose KDC the lab explicitly pins
+// to StrongCertificateBindingEnforcement=0, which is what the adcs_esc10_case1
+// role does.
+//
+// The pin has to be in the certificate's own domain, so this is deliberately not
+// a lab-wide "is any KDC permissive" test. GOAD shipped the pin on kingslanding,
+// in a forest holding no CA and no vulnerable templates, while every SAN-spoof
+// route lived in essos behind an enforcing KDC.
+func weakCertBindingDomains(hosts map[string]any) map[string]bool {
+	out := map[string]bool{}
+	for _, hRaw := range hosts {
+		h, _ := hRaw.(map[string]any)
+		if !containsString(stringSlice(h["vulns"]), "adcs_esc10_case1") {
+			continue
+		}
+		if domain := strings.ToLower(getStr(h, "domain")); domain != "" {
+			out[domain] = true
+		}
+	}
+	return out
+}
+
+func addAdcsTechniques(h map[string]any, weakKDC map[string]bool, add techniqueAdd) {
+	domain := strings.ToLower(getStr(h, "domain"))
+	credit := func(id, label string) {
+		if kdcBoundADCSTechniques[id] && !weakKDC[domain] {
+			return
+		}
+		add(id, label, "adcs")
+	}
+
 	for _, vuln := range stringSlice(h["vulns"]) {
 		if label, ok := adcsLabels[vuln]; ok {
-			add(vuln, label, "adcs")
+			credit(vuln, label)
 		}
 	}
 	// Hosts in the ansible adcs_customtemplates group publish certificate
@@ -450,7 +495,7 @@ func addAdcsTechniques(h map[string]any, add techniqueAdd) {
 			continue
 		}
 		if label, ok := adcsLabels[techID]; ok {
-			add(techID, label, "adcs")
+			credit(techID, label)
 		}
 	}
 }
