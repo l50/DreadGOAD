@@ -1,0 +1,15 @@
+# Accepted findings for TestLabConfigIntegrity.
+#
+# One line per finding, formatted "<lab>|<env>|<finding>". A finding that is not
+# listed here fails the test; a line here that no longer occurs also fails, so
+# this list can only shrink. Every entry needs a reason and an intended fix.
+#
+# Intentionally empty: every lab in ad/, in every environment, currently passes.
+# Only add an entry when a finding is understood and deliberately deferred, never
+# to quiet a failure you have not diagnosed.
+#
+# The four entries this file used to hold were all the same defect, a `shares`
+# vuln listed with no vulns_vars.shares to drive it, and all four are now fixed:
+# ad/GOAD/data/dev-overlay.json moves the thewall share to dc02 alongside the
+# flag, and GOAD-Light and GOAD-variant-1 dropped a dc02 `shares` flag that had
+# no share definition anywhere in the lab.

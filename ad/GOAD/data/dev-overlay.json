@@ -36,7 +36,18 @@
           "enable_nbt_ns",
           "shares",
           "anonymous_enum"
-        ]
+        ],
+        "vulns_vars": {
+          "shares": {
+            "thewall": {
+              "path": "C:\\thewall",
+              "list": "yes",
+              "full": "NORTH\\Stark",
+              "change": "NORTH\\jon.snow,NORTH\\samwell.tarly",
+              "read": "Users"
+            }
+          }
+        }
       },
       "dc03": {
         "vulns": [

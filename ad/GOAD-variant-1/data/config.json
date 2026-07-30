@@ -68,8 +68,7 @@
           "autologon",
           "files",
           "enable_llmnr",
-          "enable_nbt_ns",
-          "shares"
+          "enable_nbt_ns"
         ],
         "vulns_vars": {
           "directory": {
