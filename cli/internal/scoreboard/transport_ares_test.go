@@ -2,6 +2,7 @@ package scoreboard
 
 import (
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -52,7 +53,7 @@ func TestAresExploitedToTechniqueIDs(t *testing.T) {
 		{"ntlm relay", "ntlm_relay_192_168_58_10", []string{"ntlm_relay"}},
 		{"ntlmv1 downgrade", "ntlmv1_192_168_58_12", []string{"ntlmv1_downgrade"}},
 		{"seimpersonate", "seimpersonate_sql01", []string{"seimpersonate"}},
-		{"nopac", "nopac_192_168_58_240", []string{"nopac"}},
+		{"nopac", "nopac_dc01", []string{"nopac"}},
 		{"sid history", "sid_history_alice", []string{"sid_history_abuse"}},
 		{"constrained delegation", "constrained_delegation_svc_web", []string{"constrained_delegation"}},
 		{"unconstrained delegation", "unconstrained_delegation_dc01", []string{"unconstrained_delegation"}},
@@ -72,7 +73,7 @@ func TestAresExploitedToTechniqueIDs(t *testing.T) {
 		// only ever runs the nxc check module, never the reset. Mapping them
 		// would credit an attempt as an exploit.
 		{"printnightmare unproven", "printnightmare_192_168_58_10", nil},
-		{"zerologon check only", "zerologon_192_168_58_240", nil},
+		{"zerologon check only", "zerologon_dc01", nil},
 
 		// Discovery-only ids ares tracks that are not scoreboard techniques.
 		{"smb signing", "smb_signing_192_168_58_10", nil},
@@ -114,7 +115,7 @@ func TestAresExploitedTechniquesExistInAnswerKey(t *testing.T) {
 		"adcs_esc8_192.168.58.50_ca01",
 		"kerberoast_svc_sql",
 		"mssql_linked_server_192_168_58_22_sql01",
-		"nopac_192_168_58_240",
+		"nopac_dc01",
 	}
 	for _, entry := range entries {
 		ids := aresExploitedToTechniqueIDs(entry)
@@ -240,7 +241,7 @@ func TestDetectTokenCoverageDrift(t *testing.T) {
 			// but we do map it to a real objective, so it must credit.
 			name:      "nopac credits once it leaves the other bucket",
 			coverage:  cov("nopac", 1),
-			exploited: []string{"nopac_192_168_58_240"},
+			exploited: []string{"nopac_dc01"},
 			want:      nil,
 		},
 		{
@@ -288,8 +289,14 @@ func TestDetectTokenCoverageDrift(t *testing.T) {
 // ares's token_category can return is either creditable by our prefix table,
 // explicitly exempt, or explicitly aliased. A new ares category that is none
 // of those would warn forever, which trains operators to ignore the signal.
+//
+// This covers only the creditable half. Exempt categories are asserted by
+// TestDriftExemptCategoriesAreDeliberate instead, because
+// detectTokenCoverageDrift short-circuits on them before it reads the
+// exploited set: pairing one with a vuln_id here would pass for any string
+// and assert nothing.
 func TestDriftCategoriesCoverAresTokenCategory(t *testing.T) {
-	// Mirrors the return values of token_category in ares-cli
+	// Mirrors the creditable return values of token_category in ares-cli
 	// `ops/loot/format/display.rs`, paired with a representative vuln_id.
 	aresCategories := map[string]string{
 		"acl_abuse":                "acl_genericall_alice_bob",
@@ -324,15 +331,18 @@ func TestDriftCategoriesCoverAresTokenCategory(t *testing.T) {
 		"gmsa_password_read":       "gmsa_svc",
 		"laps_password_read":       "laps_sql01",
 		"rbcd":                     "rbcd_dc01",
-		// Added by l50/ares#366, which promotes these three out of "other".
-		// nopac credits via the prefix table; the other two are exempt.
-		"nopac":          "nopac_192_168_58_240",
-		"printnightmare": "printnightmare_192_168_58_10",
-		"zerologon":      "zerologon_192_168_58_240",
+		// Added by l50/ares#366, which promotes nopac out of "other". The
+		// same change promotes printnightmare and zerologon, which are
+		// exempt rather than creditable; see the test below.
+		"nopac": "nopac_dc01",
 	}
 
 	for category, vulnID := range aresCategories {
 		t.Run(category, func(t *testing.T) {
+			if driftExemptCategories[category] {
+				t.Fatalf("category %q is drift-exempt, so its vuln_id %q is never read and this case asserts nothing; move it to TestDriftExemptCategoriesAreDeliberate",
+					category, vulnID)
+			}
 			drift := detectTokenCoverageDrift(
 				&aresLoot{TokenCoverage: map[string]aresTokenBucket{category: {Exploited: 1}}},
 				[]string{vulnID},
@@ -340,6 +350,40 @@ func TestDriftCategoriesCoverAresTokenCategory(t *testing.T) {
 			if len(drift) != 0 {
 				t.Errorf("category %q with vuln_id %q reports drift %v; it needs a prefix entry, an alias, or an exemption",
 					category, vulnID, drift)
+			}
+		})
+	}
+}
+
+// TestDriftExemptCategoriesAreDeliberate pins the categories ares reports that
+// DreadGOAD refuses to credit. detectTokenCoverageDrift returns before it
+// consults the exploited set for these, so there is no vuln_id to pair them
+// with and the exploited set below is deliberately nil: the assertion is that
+// the exemption exists and suppresses the warning, nothing more.
+//
+// The exact-set check is the point. Silently widening driftExemptCategories is
+// how a real mapping bug gets muted, so a new entry must be added here and
+// justified in the driftExemptCategories doc comment.
+func TestDriftExemptCategoriesAreDeliberate(t *testing.T) {
+	want := []string{"golden_ticket", "other", "printnightmare", "zerologon"}
+
+	got := make([]string, 0, len(driftExemptCategories))
+	for category := range driftExemptCategories {
+		got = append(got, category)
+	}
+	sort.Strings(got)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("driftExemptCategories = %v, want %v; every exemption needs a documented reason", got, want)
+	}
+
+	for _, category := range want {
+		t.Run(category, func(t *testing.T) {
+			drift := detectTokenCoverageDrift(
+				&aresLoot{TokenCoverage: map[string]aresTokenBucket{category: {Exploited: 1}}},
+				nil,
+			)
+			if len(drift) != 0 {
+				t.Errorf("exempt category %q reports drift %v; the exemption is not taking effect", category, drift)
 			}
 		})
 	}
