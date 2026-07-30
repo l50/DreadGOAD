@@ -358,8 +358,8 @@ func extractTechniques(lab map[string]any, asrep map[string][]string) []Objectiv
 	addKerberosTechniques(domains, asrep, add)
 	addHostTechniques(hosts, add)
 	addDomainTechniques(domains, add)
-	addADCSWebEnrollmentTechnique(domains, add)
-	addUniversalTechniques(add)
+	addADCSWebEnrollmentTechnique(hosts, domains, add)
+	addUniversalTechniques(hosts, domains, add)
 
 	keys := make([]string, 0, len(techniques))
 	for k := range techniques {
@@ -500,38 +500,110 @@ func addPrivescTechniques(h map[string]any, add techniqueAdd) {
 	}
 }
 
-// addADCSWebEnrollmentTechnique credits ESC8 when any domain has Web Enrollment
-// installed. ESC8 isn't a per-host vulns marker (Ansible would try to dispatch
-// a non-existent vulns_adcs_esc8 role) — it's gated by the domain-level
-// ca_web_enrollment flag, which defaults to true. Mirrors validate/checks.go's
-// CAWebEnrollment() logic.
-func addADCSWebEnrollmentTechnique(domains map[string]any, add techniqueAdd) {
+// labHasADCS reports whether the lab provisions a certificate authority, using
+// only evidence visible in config.json.
+//
+// The authoritative signal is membership of the `adcs` inventory group, which
+// runs the CA-installing role, but the answer key is generated from config.json
+// alone and cannot see the inventory. The domain-level `ca_server` key is not a
+// usable substitute: it names a specific CA host for template targeting and is
+// set only by GOAD and GOAD-variant-1, while GOAD-Light, GOAD-Mini, and NHA each
+// install a CA without it. So fall back to the ADCS artifacts a lab must declare
+// to have anything worth scoring: published templates or an adcs_* vuln.
+//
+// This agrees with the `adcs` inventory group for every lab except TEMPLATE,
+// whose scaffold inventory lists a CA host while its config plants no ADCS at
+// all. Reporting no ADCS objectives there is the desired behavior.
+func labHasADCS(hosts, domains map[string]any) bool {
+	for _, dRaw := range domains {
+		d, _ := dRaw.(map[string]any)
+		if getStr(d, "ca_server") != "" {
+			return true
+		}
+	}
+	for _, hRaw := range hosts {
+		h, _ := hRaw.(map[string]any)
+		if len(stringSlice(h["vulns_adcs_templates"])) > 0 {
+			return true
+		}
+		if vv, ok := h["vulns_vars"].(map[string]any); ok {
+			if tpl, ok := vv["adcs_templates"].(map[string]any); ok && len(tpl) > 0 {
+				return true
+			}
+		}
+		for _, v := range stringSlice(h["vulns"]) {
+			if strings.HasPrefix(v, "adcs_") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// addADCSWebEnrollmentTechnique credits ESC8 when the lab installs a CA with Web
+// Enrollment. ESC8 isn't a per-host vulns marker (Ansible would try to dispatch a
+// non-existent vulns_adcs_esc8 role) — it's gated by the domain-level
+// ca_web_enrollment flag, which defaults to true.
+//
+// Which domain actually hosts the CA is an inventory fact, so an explicit
+// ca_web_enrollment=false anywhere suppresses ESC8 rather than being weighed
+// per-domain. That is deliberately conservative: NHA's only CA lives in the
+// domain that disables Web Enrollment, and omitting an objective is better than
+// crediting one an operator cannot complete.
+func addADCSWebEnrollmentTechnique(hosts, domains map[string]any, add techniqueAdd) {
+	if !labHasADCS(hosts, domains) {
+		return
+	}
 	for _, dRaw := range domains {
 		d, _ := dRaw.(map[string]any)
 		if v, ok := d["ca_web_enrollment"].(bool); ok && !v {
-			continue
+			return
 		}
-		add("adcs_esc8", "ADCS ESC8", "adcs")
-		return
 	}
+	add("adcs_esc8", "ADCS ESC8", "adcs")
 }
 
-// addUniversalTechniques credits techniques that are exploitable against any
-// default-configured GOAD lab: cross-domain escalation, unpatched DC CVEs,
-// ADCS-adjacent abuses (Certifried), IPv6 poisoning, and MAQ=10 chains. These
-// don't have per-host markers — the lab's defaults (unpatched Server roles,
-// MAQ=10, Print Spooler on, ca_web_enrollment=true) make them universally
-// applicable. Documented in docs/GOAD-vulnerabilities-comprehensive.md.
-func addUniversalTechniques(add techniqueAdd) {
-	add("child_to_parent", "Child-to-Parent Domain Escalation", "domain_trust")
+// hasParentChildDomains reports whether the lab contains a child domain of
+// another domain in the same forest (north.sevenkingdoms.local under
+// sevenkingdoms.local). Two unrelated forest roots don't qualify, so NHA's
+// ninja.hack plus academy.ninja.lan is a cross-forest trust, not a
+// child-to-parent escalation path.
+func hasParentChildDomains(domains map[string]any) bool {
+	for child := range domains {
+		for parent := range domains {
+			if child != parent && strings.HasSuffix(child, "."+parent) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// addUniversalTechniques credits techniques that need no per-host marker because
+// the lab's defaults (unpatched Server roles, MAQ=10, Print Spooler on) make them
+// reachable in any domain. Documented in
+// docs/GOAD-vulnerabilities-comprehensive.md.
+//
+// Two of these are not actually universal and are gated on lab topology:
+// child-to-parent escalation needs a parent/child domain pair, and Certifried
+// needs a CA to request a certificate from. Crediting them unconditionally
+// inflated the single-domain and CA-less labs (MINILAB, SCCM, DRACARYS) with
+// objectives that cannot be completed there.
+func addUniversalTechniques(hosts, domains map[string]any, add techniqueAdd) {
 	add("nopac", "noPac (CVE-2021-42287/42278)", "cve")
 	add("printnightmare", "PrintNightmare (CVE-2021-1675)", "cve")
 	add("zerologon", "ZeroLogon (CVE-2020-1472)", "cve")
 	add("cve_2019_1040", "CVE-2019-1040 (Remove-MIC NTLM Bypass)", "cve")
-	add("certifried", "Certifried (CVE-2022-26923)", "adcs")
 	add("krbrelayup", "KrbRelayUp (RBCD self-relay)", "privilege_escalation")
 	add("machine_account_quota", "Machine Account Quota Abuse (MAQ=10)", "privilege_escalation")
 	add("mitm6", "MITM6 IPv6/DHCPv6 Poisoning", "network")
+
+	if hasParentChildDomains(domains) {
+		add("child_to_parent", "Child-to-Parent Domain Escalation", "domain_trust")
+	}
+	if labHasADCS(hosts, domains) {
+		add("certifried", "Certifried (CVE-2022-26923)", "adcs")
+	}
 }
 
 func addDomainTechniques(domains map[string]any, add techniqueAdd) {
