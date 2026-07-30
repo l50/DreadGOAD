@@ -377,146 +377,184 @@ func (idx *index) resolveGroup(ref, domainCtx string) bool {
 	return false
 }
 
+// refChecker accumulates findings for a single domain or host. It carries the
+// path prefix and the domain context that bare references resolve against, so
+// the per-section helpers below stay small enough to read at a glance.
+type refChecker struct {
+	idx    *index
+	prefix string // e.g. `domains["essos.local"].`
+	ctx    string // domain FQDN that unprefixed references resolve against
+	out    []Finding
+}
+
+func (c *refChecker) at(format string, a ...any) string {
+	return c.prefix + fmt.Sprintf(format, a...)
+}
+
+func (c *refChecker) add(path, ref, msg string) {
+	c.out = append(c.out, Finding{Path: path, Ref: ref, Msg: msg})
+}
+
+// ref reports ref unless it resolves to any principal.
+func (c *refChecker) ref(path, ref, what string) {
+	if ref != "" && !c.idx.resolve(ref, c.ctx) {
+		c.add(path, ref, "unresolved "+what)
+	}
+}
+
+// group reports ref unless it resolves to a group specifically.
+func (c *refChecker) group(path, ref string) {
+	if ref != "" && !c.idx.resolveGroup(ref, c.ctx) {
+		c.add(path, ref, "unresolved group")
+	}
+}
+
 func (idx *index) checkDomain(fqdn string, d domain) []Finding {
-	var out []Finding
-	at := func(format string, a ...any) string {
-		return fmt.Sprintf(`domains[%q].`+format, append([]any{fqdn}, a...)...)
-	}
-	check := func(path, ref, what string) {
-		if ref != "" && !idx.resolve(ref, fqdn) {
-			out = append(out, Finding{Path: path, Ref: ref, Msg: "unresolved " + what})
-		}
-	}
+	c := &refChecker{idx: idx, prefix: fmt.Sprintf("domains[%q].", fqdn), ctx: fqdn}
+	c.domainTopology(d)
+	c.domainGroups(d)
+	c.domainUsers(d)
+	c.domainACLs(d)
+	c.domainCrossRefs(d)
+	return c.out
+}
 
-	if d.DC != "" && !idx.hostIDs[strings.ToLower(d.DC)] {
-		out = append(out, Finding{Path: at("dc"), Ref: d.DC, Msg: "domain controller is not a declared host"})
+func (c *refChecker) domainTopology(d domain) {
+	if d.DC != "" && !c.idx.hostIDs[strings.ToLower(d.DC)] {
+		c.add(c.at("dc"), d.DC, "domain controller is not a declared host")
 	}
-	if d.Trust != "" {
-		if _, ok := idx.domainKey[strings.ToLower(d.Trust)]; !ok {
-			out = append(out, Finding{Path: at("trust"), Ref: d.Trust, Msg: "trust partner is not a declared domain"})
-		}
+	if d.Trust == "" {
+		return
 	}
+	if _, ok := c.idx.domainKey[strings.ToLower(d.Trust)]; !ok {
+		c.add(c.at("trust"), d.Trust, "trust partner is not a declared domain")
+	}
+}
 
+func (c *refChecker) domainGroups(d domain) {
 	for scope, groups := range d.Groups {
 		for name, g := range groups {
-			check(at("groups.%s.%s.managed_by", scope, name), g.ManagedBy, "managed_by principal")
+			c.ref(c.at("groups.%s.%s.managed_by", scope, name), g.ManagedBy, "managed_by principal")
 			for _, m := range g.Members {
-				check(at("groups.%s.%s.members", scope, name), m, "group member")
+				c.ref(c.at("groups.%s.%s.members", scope, name), m, "group member")
 			}
 		}
 	}
+}
 
+func (c *refChecker) domainUsers(d domain) {
 	for name, u := range d.Users {
 		for _, g := range u.Groups {
-			if !idx.resolveGroup(g, fqdn) {
-				out = append(out, Finding{Path: at("users.%s.groups", name), Ref: g, Msg: "unresolved group"})
-			}
+			c.group(c.at("users.%s.groups", name), g)
 		}
 	}
+}
 
+func (c *refChecker) domainACLs(d domain) {
 	for key, a := range d.ACLs {
-		check(at("acls.%s.for", key), a.For, "ACL principal")
-		check(at("acls.%s.to", key), a.To, "ACL target")
+		c.ref(c.at("acls.%s.for", key), a.For, "ACL principal")
+		c.ref(c.at("acls.%s.to", key), a.To, "ACL target")
 	}
+}
 
+func (c *refChecker) domainCrossRefs(d domain) {
 	for g, members := range d.MultiDomainGroupsMember {
-		if !idx.resolveGroup(g, fqdn) {
-			out = append(out, Finding{Path: at("multi_domain_groups_member"), Ref: g, Msg: "unresolved group"})
-		}
+		c.group(c.at("multi_domain_groups_member"), g)
 		for _, m := range members {
-			check(at("multi_domain_groups_member.%s", g), m, "cross-domain member")
+			c.ref(c.at("multi_domain_groups_member.%s", g), m, "cross-domain member")
 		}
 	}
-
 	for _, r := range d.LAPSReaders {
-		check(at("laps_readers"), r, "LAPS reader")
+		c.ref(c.at("laps_readers"), r, "LAPS reader")
 	}
-
 	for key, g := range d.GMSA {
 		for _, hn := range g.HostNames {
-			if !idx.hostnames[strings.ToLower(hn)] {
-				out = append(out, Finding{Path: at("gmsa.%s.gMSA_HostNames", key), Ref: hn, Msg: "gMSA host is not a declared host"})
+			if !c.idx.hostnames[strings.ToLower(hn)] {
+				c.add(c.at("gmsa.%s.gMSA_HostNames", key), hn, "gMSA host is not a declared host")
 			}
 		}
 	}
-	return out
 }
 
 func (idx *index) checkHost(id string, h host, opts Options) []Finding {
-	var out []Finding
-	at := func(format string, a ...any) string {
-		return fmt.Sprintf(`hosts[%q].`+format, append([]any{id}, a...)...)
-	}
-	ctx := h.Domain
-	check := func(path, ref, what string) {
-		if ref != "" && !idx.resolve(ref, ctx) {
-			out = append(out, Finding{Path: path, Ref: ref, Msg: "unresolved " + what})
-		}
-	}
+	c := &refChecker{idx: idx, prefix: fmt.Sprintf("hosts[%q].", id), ctx: h.Domain}
+	c.hostDomain(h)
+	c.hostLocalGroups(h)
+	c.hostMSSQL(h)
+	c.hostVulns(h, opts)
+	return c.out
+}
 
-	if h.Domain != "" {
-		if _, ok := idx.domainKey[strings.ToLower(h.Domain)]; !ok {
-			out = append(out, Finding{Path: at("domain"), Ref: h.Domain, Msg: "host joins an undeclared domain"})
-		}
+func (c *refChecker) hostDomain(h host) {
+	if h.Domain == "" {
+		return
 	}
+	if _, ok := c.idx.domainKey[strings.ToLower(h.Domain)]; !ok {
+		c.add(c.at("domain"), h.Domain, "host joins an undeclared domain")
+	}
+}
 
+func (c *refChecker) hostLocalGroups(h host) {
 	for lg, members := range h.LocalGroups {
 		for _, m := range members {
-			check(at("local_groups.%s", lg), m, "local group member")
+			c.ref(c.at("local_groups.%s", lg), m, "local group member")
 		}
 	}
+}
 
-	if h.MSSQL != nil {
-		for _, s := range h.MSSQL.Sysadmins {
-			check(at("mssql.sysadmins"), s, "MSSQL sysadmin")
-		}
-		for login := range h.MSSQL.ExecuteAsLogin {
-			// Values are SQL logins (e.g. "sa"), which are not AD principals;
-			// only the granted-to key is an AD identity.
-			check(at("mssql.executeaslogin"), login, "MSSQL login")
-		}
-		for key, e := range h.MSSQL.ExecuteAsUser {
-			check(at("mssql.executeasuser.%s.user", key), e.User, "MSSQL user")
-		}
+func (c *refChecker) hostMSSQL(h host) {
+	if h.MSSQL == nil {
+		return
 	}
+	for _, s := range h.MSSQL.Sysadmins {
+		c.ref(c.at("mssql.sysadmins"), s, "MSSQL sysadmin")
+	}
+	for login := range h.MSSQL.ExecuteAsLogin {
+		// Values are SQL logins (e.g. "sa"), which are not AD principals;
+		// only the granted-to key is an AD identity.
+		c.ref(c.at("mssql.executeaslogin"), login, "MSSQL login")
+	}
+	for key, e := range h.MSSQL.ExecuteAsUser {
+		c.ref(c.at("mssql.executeasuser.%s.user", key), e.User, "MSSQL user")
+	}
+}
 
-	// The pairing that broke ESC13: a vuln stays in the list while the overlay
-	// deletes the vulns_vars entry, or the group that entry points at.
+// hostVulns covers the pairing that broke ESC13: a vuln stays in the list while
+// an overlay deletes the vulns_vars entry, or the group that entry points at.
+func (c *refChecker) hostVulns(h host, opts Options) {
 	for _, v := range h.Vulns {
-		if opts.KnownVulnRoles != nil && !opts.KnownVulnRoles[v] {
-			out = append(out, Finding{
-				Path: at("vulns"),
-				Ref:  v,
-				Msg:  "no ansible/roles/vulns_<name> role exists for this vuln",
-			})
-		}
-		if opts.VulnsRequiringVars[v] {
-			if _, ok := h.VulnsVars[v]; !ok {
-				out = append(out, Finding{
-					Path: at("vulns"),
-					Ref:  v,
-					Msg:  "vuln has no vulns_vars entry, so its role provisions nothing",
-				})
-			}
-		}
-		for _, leaf := range opts.VulnsVarsGroupRefs[v] {
-			for _, ref := range vulnsVarsLeaves(h.VulnsVars, v, leaf) {
-				if !idx.resolveGroup(ref, ctx) {
-					out = append(out, Finding{
-						Path: at("vulns_vars.%s.*.%s", v, leaf),
-						Ref:  ref,
-						Msg:  "unresolved group",
-					})
-				}
-			}
-		}
-		for _, leaf := range opts.VulnsVarsPrincipalRefs[v] {
-			for _, ref := range vulnsVarsLeaves(h.VulnsVars, v, leaf) {
-				check(at("vulns_vars.%s.*.%s", v, leaf), ref, "principal")
-			}
+		c.vulnHasRole(v, opts)
+		c.vulnHasVars(h, v, opts)
+		c.vulnVarsRefs(h, v, opts)
+	}
+}
+
+func (c *refChecker) vulnHasRole(v string, opts Options) {
+	if opts.KnownVulnRoles != nil && !opts.KnownVulnRoles[v] {
+		c.add(c.at("vulns"), v, "no ansible/roles/vulns_<name> role exists for this vuln")
+	}
+}
+
+func (c *refChecker) vulnHasVars(h host, v string, opts Options) {
+	if !opts.VulnsRequiringVars[v] {
+		return
+	}
+	if _, ok := h.VulnsVars[v]; !ok {
+		c.add(c.at("vulns"), v, "vuln has no vulns_vars entry, so its role provisions nothing")
+	}
+}
+
+func (c *refChecker) vulnVarsRefs(h host, v string, opts Options) {
+	for _, leaf := range opts.VulnsVarsGroupRefs[v] {
+		for _, ref := range vulnsVarsLeaves(h.VulnsVars, v, leaf) {
+			c.group(c.at("vulns_vars.%s.*.%s", v, leaf), ref)
 		}
 	}
-	return out
+	for _, leaf := range opts.VulnsVarsPrincipalRefs[v] {
+		for _, ref := range vulnsVarsLeaves(h.VulnsVars, v, leaf) {
+			c.ref(c.at("vulns_vars.%s.*.%s", v, leaf), ref, "principal")
+		}
+	}
 }
 
 // vulnsVarsLeaves pulls every value of leaf out of vulns_vars[vuln], which is
