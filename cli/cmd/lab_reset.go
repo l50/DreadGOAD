@@ -219,6 +219,11 @@ var labResetCmd = &cobra.Command{
   2. Re-run AD-state playbooks to restore users, ACLs, group membership,
      trusts, and vulnerability seeding.
 
+Stage 2 reconciles rather than only re-applies. Passwords an attack run
+changed are reset back to the lab config, and group memberships an attack
+run added are removed. Cross-domain members, machine accounts, and built-in
+principals (RID < 1000) are never touched.
+
 Idempotent: safe to re-run.`,
 	Example: `  dreadgoad lab reset
   dreadgoad lab reset --skip-purge
