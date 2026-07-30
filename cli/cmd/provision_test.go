@@ -92,6 +92,45 @@ func TestParseExtraVarsRejectsMalformed(t *testing.T) {
 	}
 }
 
+// TestApplyExtraVarsPrecedence pins the layering. The tunnel vars are
+// connection plumbing, so a user var must win, but only the keys it names: a
+// -e that quietly dropped the rest would break the connection instead of the
+// setting the operator meant to change.
+func TestApplyExtraVarsPrecedence(t *testing.T) {
+	socks := map[string]string{
+		"ansible_connection": "psrp",
+		"ansible_port":       "5985",
+	}
+	got := applyExtraVars(socks, map[string]string{
+		"ansible_port":            "5986",
+		"ad_reconcile_check_only": "true",
+	})
+
+	want := map[string]string{
+		"ansible_connection":      "psrp",
+		"ansible_port":            "5986",
+		"ad_reconcile_check_only": "true",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("key %q: got %q, want %q", k, got[k], v)
+		}
+	}
+	if socks["ansible_port"] != "5985" {
+		t.Errorf("caller's map was mutated: %v", socks)
+	}
+}
+
+func TestApplyExtraVarsWithoutUserVarsIsPassthrough(t *testing.T) {
+	socks := map[string]string{"ansible_connection": "psrp"}
+	if got := applyExtraVars(socks, nil); got["ansible_connection"] != "psrp" || len(got) != 1 {
+		t.Errorf("got %v, want the tunnel vars unchanged", got)
+	}
+}
+
 func TestSortedPairsIsStable(t *testing.T) {
 	got := sortedPairs(map[string]string{"b": "2", "a": "1", "c": "3"})
 	want := []string{"a=1", "b=2", "c=3"}

@@ -133,14 +133,14 @@ var overlayDropKeys = []struct {
 //
 // CheckIntegrity cannot see this class, by construction. Under RFC 7386 an
 // array in an overlay replaces its base counterpart wholesale rather than
-// merging into it, so an overlay that re-declares `vulns` without one of the
+// merging into it, so an overlay that redeclares `vulns` without one of the
 // base's entries yields a document that is internally consistent and silently
 // smaller. Nothing dangles, so a referential check reports nothing, and
 // vulnerabilities.yml simply never includes the absent role: the play recap
 // reads ok=N failed=0 and the lab is quietly wrong in that environment alone.
 //
 // This shipped. Adding adcs_esc10_case1 to dc03 in config.json left the dev,
-// staging and test overlays re-declaring dc03.vulns without it, so ESC6 and
+// staging and test overlays redeclaring dc03.vulns without it, so ESC6 and
 // ESC9 stayed unexploitable in all three, while prod, which carries no dc03
 // override and therefore inherited the base, was correct.
 //
@@ -244,7 +244,7 @@ type host struct {
 	Scripts            []string            `json:"scripts"`
 	VulnsADCSTemplates []string            `json:"vulns_adcs_templates"`
 	VulnsVars          map[string]any      `json:"vulns_vars"`
-	MSSQL       *struct {
+	MSSQL              *struct {
 		Sysadmins      []string          `json:"sysadmins"`
 		ExecuteAsLogin map[string]string `json:"executeaslogin"`
 		ExecuteAsUser  map[string]struct {

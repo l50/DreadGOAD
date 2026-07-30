@@ -371,6 +371,25 @@ func parseExtraVars(cmd *cobra.Command) (map[string]string, error) {
 	return out, nil
 }
 
+// applyExtraVars layers user-supplied vars over the SOCKS tunnel's, so an
+// explicit -e always wins; the tunnel only sets connection plumbing, which
+// nobody overrides by accident. It also echoes what it applied, because a var
+// that silently failed to take effect is indistinguishable from one that did.
+func applyExtraVars(socksVars, extraVars map[string]string) map[string]string {
+	if len(extraVars) == 0 {
+		return socksVars
+	}
+	out := make(map[string]string, len(socksVars)+len(extraVars))
+	for k, v := range socksVars {
+		out[k] = v
+	}
+	for k, v := range extraVars {
+		out[k] = v
+	}
+	fmt.Printf("Extra vars: %s\n", strings.Join(sortedPairs(extraVars), " "))
+	return out
+}
+
 // sortedPairs renders a var map as stable "k=v" strings for display.
 func sortedPairs(m map[string]string) []string {
 	out := make([]string, 0, len(m))
@@ -421,20 +440,7 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 		defer socksTunnel.Close()
 	}
 
-	// User-supplied vars land on top of the tunnel's, so an explicit -e always
-	// wins. The tunnel only sets connection plumbing, which nobody overrides by
-	// accident.
-	runVars := socksVars
-	if len(extraVars) > 0 {
-		runVars = make(map[string]string, len(socksVars)+len(extraVars))
-		for k, v := range socksVars {
-			runVars[k] = v
-		}
-		for k, v := range extraVars {
-			runVars[k] = v
-		}
-		fmt.Printf("Extra vars: %s\n", strings.Join(sortedPairs(extraVars), " "))
-	}
+	runVars := applyExtraVars(socksVars, extraVars)
 
 	log := slog.Default()
 	useSSM := isSSMInventory(cfg)

@@ -272,7 +272,7 @@ func TestCheckIntegrityCatchesOverlayRegressions(t *testing.T) {
 
 // TestCheckOverlayDropsCatchesSilentRemoval pins the defect that shipped on
 // 2026-07-30: adcs_esc10_case1 was added to dc03 in config.json, but the dev,
-// staging and test overlays each re-declared dc03.vulns without it, so the role
+// staging and test overlays each redeclared dc03.vulns without it, so the role
 // never ran and ESC6/ESC9 stayed unexploitable in exactly those environments.
 //
 // The merged document is internally consistent in that state, which is why
@@ -284,7 +284,7 @@ func TestCheckOverlayDropsCatchesSilentRemoval(t *testing.T) {
 		t.Fatalf("read GOAD config: %v", err)
 	}
 
-	// Re-declare dc03.vulns without adcs_esc10_case1, exactly as the overlays did.
+	// Redeclare dc03.vulns without adcs_esc10_case1, exactly as the overlays did.
 	patch := `{"lab":{"hosts":{"dc03":{"vulns":["ntlmdowngrade","disable_firewall","adcs_esc7","adcs_esc13","adcs_esc15"]}}}}`
 	merged, err := jsonmerge.MergePatchBytes(base, []byte(patch))
 	if err != nil {
