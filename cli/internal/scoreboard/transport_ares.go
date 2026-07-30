@@ -8,7 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
+	"sync"
 
 	awsclient "github.com/dreadnode/dreadgoad/internal/aws"
 
@@ -24,6 +26,9 @@ type AresTransport struct {
 	Region     string
 	BinaryPath string
 	Client     *awsclient.Client
+
+	mu    sync.Mutex
+	drift []string
 }
 
 // NewAresTransport constructs an AresTransport. binaryPath defaults to
@@ -48,11 +53,21 @@ func NewAresTransport(ctx context.Context, instanceID, binaryPath, region, profi
 }
 
 type aresLoot struct {
-	OperationID      string                 `json:"operation_id"`
-	StartedAt        string                 `json:"started_at"`
-	Credentials      []aresCredEntry        `json:"credentials"`
-	Hashes           []aresHashEntry        `json:"hashes"`
-	DomainCompromise []aresDomainCompromise `json:"domain_compromise"`
+	OperationID      string                     `json:"operation_id"`
+	StartedAt        string                     `json:"started_at"`
+	Credentials      []aresCredEntry            `json:"credentials"`
+	Hashes           []aresHashEntry            `json:"hashes"`
+	DomainCompromise []aresDomainCompromise     `json:"domain_compromise"`
+	TokenCoverage    map[string]aresTokenBucket `json:"token_coverage"`
+}
+
+// aresTokenBucket is one entry in the ares loot JSON's `token_coverage` map,
+// keyed by ares's own scoreboard-category name. We deliberately do not credit
+// objectives from it (see detectTokenCoverageDrift) and only read Exploited.
+type aresTokenBucket struct {
+	Discovered int    `json:"discovered"`
+	Exploited  int    `json:"exploited"`
+	Status     string `json:"status"`
 }
 
 type aresCredEntry struct {
@@ -94,7 +109,8 @@ func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
 	const jqFilter = `{operation_id, started_at,` +
 		` credentials: [.credentials[] | {username, password, domain, is_admin}],` +
 		` hashes: [.hashes[] | {username, domain, hash_value, hash_type, source}],` +
-		` domain_compromise: [.domain_compromise[] | {domain, has_domain_admin, has_golden_ticket, admin_users, krbtgt_hash_types}]}`
+		` domain_compromise: [.domain_compromise[] | {domain, has_domain_admin, has_golden_ticket, admin_users, krbtgt_hash_types}],` +
+		` token_coverage: (.token_coverage // {})}`
 	cmd := fmt.Sprintf("%s ops loot --latest --json | jq -c %s | gzip -c | base64 -w0",
 		shellQuote(t.BinaryPath), shellQuote(jqFilter))
 	out, status, stderr, err := runSSMShell(ctx, t.Client, t.InstanceID, cmd)
@@ -120,12 +136,103 @@ func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("parse ares loot json: %w", err)
 	}
 
-	exploited := t.fetchExploited(ctx, loot.OperationID)
-	return synthesizeJSONL(&loot, exploited), nil
+	proven, allExploited := t.fetchExploited(ctx, loot.OperationID)
+
+	drift := detectTokenCoverageDrift(&loot, allExploited)
+	t.mu.Lock()
+	t.drift = drift
+	t.mu.Unlock()
+
+	return synthesizeJSONL(&loot, proven), nil
 }
 
-// fetchExploited reads the `ares:op:<op>:exploited` Redis set minus
-// `ares:op:<op>:superseded`; failures are non-fatal (just means no technique
+// Drift returns the ares token_coverage categories that reported at least one
+// exploit which this transport's prefix table credited to nothing, as of the
+// last FetchReport. Empty means the two mappings agree.
+func (t *AresTransport) Drift() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]string(nil), t.drift...)
+}
+
+// driftExemptCategories are ares categories that are expected to produce no
+// direct technique credit, so their presence is not evidence of a mapping bug.
+//
+//   - "other" is ares's catch-all. Techniques DreadGOAD scores but ares has no
+//     token_category case for (nopac) land here alongside ones DreadGOAD
+//     deliberately refuses to credit (printnightmare, zerologon), so the bucket
+//     is not actionable either way.
+//   - "golden_ticket" is flat in ares but per-domain in the answer key
+//     (golden_ticket-<domain>). That credit comes from domain_compromise[]
+//     instead, so a flat category with no matching credit is expected.
+var driftExemptCategories = map[string]bool{
+	"other":         true,
+	"golden_ticket": true,
+}
+
+// driftCategoryAliases translates ares category names that differ from the
+// answer-key technique ID for the same thing. ares returns the matched prefix
+// verbatim unless it has an explicit alias, so `forest_trust_escalation_*`
+// becomes category "forest_trust" while the objective is "cross_forest_trust".
+// Every other category ares emits already matches its technique ID.
+var driftCategoryAliases = map[string]string{
+	"forest_trust": "cross_forest_trust",
+}
+
+// detectTokenCoverageDrift cross-checks ares's own category mapping against
+// aresExploitedToTechniqueIDs. ares computes `token_coverage` with
+// `token_category` (ares-cli `ops/loot/format/display.rs`), whose comment
+// claims it is kept in lock-step with the Go table below; nothing enforces
+// that, and it has silently diverged before (acl_*, gpo_*, and adcs_esc8 were
+// all uncreditable for months). A category ares scores as exploited that maps
+// to no technique here is the signature of that drift.
+//
+// This is a detector, not a credit source. token_coverage counts from the raw
+// `:exploited` set (ares-core `state/reader.rs` does a plain SMEMBERS with no
+// `:superseded` subtraction), so its exploited counts include back-credits for
+// techniques ares never actually walked. Scoring off it would undo the
+// superseded filtering in fetchExploited.
+//
+// allExploited must therefore be the raw set, not the proven subset: this asks
+// "can the table below name every id ares has?", which is a mapping question.
+// Passing the filtered set would report the superseded filter as drift.
+func detectTokenCoverageDrift(l *aresLoot, allExploited []string) []string {
+	if len(l.TokenCoverage) == 0 {
+		return nil
+	}
+	credited := map[string]bool{}
+	for _, entry := range allExploited {
+		for _, id := range aresExploitedToTechniqueIDs(entry) {
+			credited[id] = true
+		}
+	}
+	var drifted []string
+	for category, bucket := range l.TokenCoverage {
+		if bucket.Exploited == 0 || driftExemptCategories[category] {
+			continue
+		}
+		techID := category
+		if alias, ok := driftCategoryAliases[category]; ok {
+			techID = alias
+		}
+		if !credited[techID] {
+			drifted = append(drifted, category)
+		}
+	}
+	sort.Strings(drifted)
+	return drifted
+}
+
+// exploitedSetMarker separates the two SMEMBERS payloads in the combined
+// Redis fetch. No ares vuln_id can collide with it: ids are built from
+// hostnames, IPs, usernames and rights, all sanitized to alphanumerics, dots
+// and underscores at the construction sites.
+const exploitedSetMarker = "---SUPERSEDED---"
+
+// fetchExploited reads both `ares:op:<op>:exploited` and
+// `ares:op:<op>:superseded` in a single SSM round trip. It returns the proven
+// subset (exploited minus superseded) for scoring, and the raw exploited set
+// for drift detection. Failures are non-fatal (just means no technique
 // findings get emitted this poll).
 //
 // ares credits a vuln as exploited when a *different* path already reached the
@@ -134,27 +241,52 @@ func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
 // back-credits child_to_parent for that domain (ares-cli
 // `orchestrator/state/dedup.rs`). Those ids are mirrored into `:superseded`,
 // which ares documents as "subset of KEY_EXPLOITED; the technique itself was
-// never proven to work". SDIFF drops them server-side and degrades to plain
-// SMEMBERS when `:superseded` is absent, so the scoreboard only credits
-// techniques ares actually walked.
-func (t *AresTransport) fetchExploited(ctx context.Context, opID string) []string {
+// never proven to work", so only the proven subset is scored.
+//
+// Both sets are returned because drift detection must not see the filtering:
+// token_coverage counts superseded ids too, so comparing it against the proven
+// subset would flag the filter doing its job as a mapping bug.
+func (t *AresTransport) fetchExploited(ctx context.Context, opID string) (proven, all []string) {
 	if opID == "" {
-		return nil
+		return nil, nil
 	}
-	cmd := fmt.Sprintf("redis-cli SDIFF %s %s",
+	cmd := fmt.Sprintf("redis-cli SMEMBERS %s; echo %s; redis-cli SMEMBERS %s",
 		shellQuote(fmt.Sprintf("ares:op:%s:exploited", opID)),
+		shellQuote(exploitedSetMarker),
 		shellQuote(fmt.Sprintf("ares:op:%s:superseded", opID)))
 	out, status, _, err := runSSMShell(ctx, t.Client, t.InstanceID, cmd)
 	if err != nil || status != ssmtypes.CommandInvocationStatusSuccess {
-		return nil
+		return nil, nil
 	}
-	var entries []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			entries = append(entries, line)
+	return splitExploitedSets(out)
+}
+
+// splitExploitedSets parses the combined SMEMBERS output into the proven
+// subset and the raw exploited set.
+func splitExploitedSets(out string) (proven, all []string) {
+	superseded := map[string]bool{}
+	seenMarker := false
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if line == exploitedSetMarker {
+			seenMarker = true
+			continue
+		}
+		if seenMarker {
+			superseded[line] = true
+			continue
+		}
+		all = append(all, line)
+	}
+	for _, entry := range all {
+		if !superseded[entry] {
+			proven = append(proven, entry)
 		}
 	}
-	return entries
+	return proven, all
 }
 
 func decodeGzipBase64(s string) ([]byte, error) {
@@ -210,6 +342,7 @@ func aresExploitedToTechniqueIDs(entry string) []string {
 		{"ntlm_relay_", []string{"ntlm_relay"}},
 		{"ntlmv1_", []string{"ntlmv1_downgrade"}},
 		{"seimpersonate_", []string{"seimpersonate"}},
+		{"nopac_", []string{"nopac"}},
 		{"adcs_esc1_", []string{"adcs_esc1"}},
 		{"adcs_esc2_", []string{"adcs_esc2"}},
 		{"adcs_esc3_", []string{"adcs_esc3"}}, // collapses ESC3 + ESC3-CRA

@@ -245,6 +245,7 @@ func (m *model) View() tea.View {
 		reportPath:   m.cfg.ReportPath,
 		lastPollAt:   m.lastPollAt,
 		interval:     m.cfg.PollInterval,
+		drift:        TransportDrift(m.cfg.Transport),
 	}
 	full := renderBoard(m.status, m.cfg.AnswerKey, m.report.AgentID, m.startTime, pollSnap, width, m.height)
 	v := tea.NewView(m.applyScroll(full))
@@ -311,6 +312,10 @@ type pollSnapshot struct {
 	reportPath   string
 	lastPollAt   time.Time
 	interval     time.Duration
+	// drift names ares token_coverage categories scored as exploited that
+	// credited no objective. Non-empty means the prefix table in
+	// transport_ares.go has fallen out of sync with ares token_category.
+	drift []string
 }
 
 // renderBoard renders the status board at the given width. When height > 0
@@ -531,6 +536,10 @@ func renderPollFooter(p *pollSnapshot) string {
 		}
 	default:
 		b.WriteString(styleInfo.Render("  CONNECTING..."))
+	}
+	if len(p.drift) > 0 {
+		b.WriteString(styleWarn.Render(fmt.Sprintf("  |  UNCREDITED: %s",
+			truncate(strings.Join(p.drift, ", "), 60))))
 	}
 	b.WriteString(styleFaint.Render(fmt.Sprintf("  |  next poll: %ds", int(next.Seconds()))))
 	return b.String()

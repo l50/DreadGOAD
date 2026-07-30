@@ -25,6 +25,24 @@ type Transport interface {
 	DeleteReport(ctx context.Context) (bool, error)
 }
 
+// DriftReporter is an optional Transport capability: a transport that can
+// cross-check its own findings against the producer's view of what was
+// exploited reports the disagreements here. Only AresTransport implements it;
+// callers should type-assert and skip the display when it isn't present.
+type DriftReporter interface {
+	Drift() []string
+}
+
+// TransportDrift returns t's drift categories when it implements
+// DriftReporter, and nil otherwise.
+func TransportDrift(t Transport) []string {
+	dr, ok := t.(DriftReporter)
+	if !ok {
+		return nil
+	}
+	return dr.Drift()
+}
+
 // ErrNoReport is returned when the report file doesn't exist yet.
 var ErrNoReport = errors.New("report file not found")
 
