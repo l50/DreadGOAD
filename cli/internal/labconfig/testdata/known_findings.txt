@@ -1,0 +1,32 @@
+# Accepted findings for TestLabConfigIntegrity.
+#
+# One line per finding, formatted "<lab>|<env>|<finding>". A finding that is not
+# listed here fails the test; a line here that no longer occurs also fails, so
+# this list can only shrink. Every entry needs a reason and an intended fix.
+#
+# ---------------------------------------------------------------------------
+# `shares` listed without a vulns_vars.shares entry
+#
+# The vulns_shares role iterates `with_dict: "{{ vulns_vars }}"`, and
+# vulnerabilities.yml passes `vulns_vars[vuln] | default({})`. A host that lists
+# the vuln with no matching vars therefore loops zero times: no share is created,
+# no task fails, and the lab reports the vuln as applied. These are all the same
+# defect in three places.
+#
+# GOAD-Light: inherited from upstream GOAD, which lists `shares` on dc02 while no
+# host in that lab defines vulns_vars.shares (verified at merge base 992307a).
+# Fixing it means deciding what share GOAD-Light is supposed to have, which is a
+# lab-design question for upstream, not a mechanical repair.
+GOAD-Light|base (no overlay)|hosts["dc02"].vulns: vuln has no vulns_vars entry, so its role provisions nothing ("shares")
+#
+# GOAD dev: dev-overlay.json adds `shares` to dc02 and drops it from srv02, but
+# leaves vulns_vars.shares on srv02. The intent was evidently to move the
+# `thewall` share to the DC; only the flag moved, so dev has no `thewall` share
+# anywhere. Fix is to move the vars alongside the vuln in dev-overlay.json.
+GOAD|dev|hosts["dc02"].vulns: vuln has no vulns_vars entry, so its role provisions nothing ("shares")
+#
+# GOAD-variant-1: a generated artifact, carrying the same dc02 `shares` flag with
+# no vars. It clears when the variant is regenerated from a corrected ad/GOAD,
+# which also needs a decision about the variant's random identity being replaced.
+GOAD-variant-1|base (no overlay)|hosts["dc02"].vulns: vuln has no vulns_vars entry, so its role provisions nothing ("shares")
+GOAD-variant-1|dev|hosts["dc02"].vulns: vuln has no vulns_vars entry, so its role provisions nothing ("shares")
