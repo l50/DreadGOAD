@@ -2,7 +2,7 @@ $task = '/c powershell New-PSDrive -Name "Public" -PSProvider "FileSystem" -Root
 $repeat = (New-TimeSpan -Minutes 2)
 $taskName = "responder_bot"
 $user = "cloud.sigmatech.local\donna.nelson"
-$password = "xdbxessal"
+$password = "{{ lab.domains[lab.hosts.dc02.domain].users['donna.nelson'].password }}"
 
 $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "$task"
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval $repeat
