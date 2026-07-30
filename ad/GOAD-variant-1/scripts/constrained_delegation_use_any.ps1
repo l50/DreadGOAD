@@ -1,3 +1,3 @@
-Set-ADUser -Identity "christine.martin" -ServicePrincipalNames @{Add='CIFS/thewall.hq.deltasystems.local'}
-Get-ADUser -Identity "christine.martin" | Set-ADAccountControl -TrustedToAuthForDelegation $true
-Set-ADUser -Identity "christine.martin" -Add @{'msDS-AllowedToDelegateTo'=@('CIFS/beacon.hq.deltasystems.local','CIFS/beacon')}
+Set-ADUser -Identity "anthony.green" -ServicePrincipalNames @{Add='CIFS/thewall.cloud.sigmatech.local'}
+Get-ADUser -Identity "anthony.green" | Set-ADAccountControl -TrustedToAuthForDelegation $true
+Set-ADUser -Identity "anthony.green" -Add @{'msDS-AllowedToDelegateTo'=@('CIFS/delta.cloud.sigmatech.local','CIFS/delta')}

@@ -8,7 +8,7 @@
 
 "dc01" = {
   name               = "dc01"
-  domain             = "deltasystems.local"
+  domain             = "sigmatech.local"
   windows_sku        = "2019-Datacenter"
   ami                = "ami-07b70ee6215b30557"
   instance_type      = "t2.medium"
@@ -17,7 +17,7 @@
 }
 "dc02" = {
   name               = "dc02"
-  domain             = "hq.deltasystems.local"
+  domain             = "cloud.sigmatech.local"
   windows_sku        = "2019-Datacenter"
   ami                = "ami-07b70ee6215b30557"
   instance_type      = "t2.medium"
@@ -26,7 +26,7 @@
 }
 "dc03" = {
   name               = "dc03"
-  domain             = "vortexindustries.local"
+  domain             = "vertexcorp.local"
   windows_sku        = "2016-Datacenter"
   ami                = "ami-0dbedda2d0007250e"
   instance_type      = "t2.medium"
@@ -35,7 +35,7 @@
 }
 "srv02" = {
   name               = "srv02"
-  domain             = "hq.deltasystems.local"
+  domain             = "cloud.sigmatech.local"
   windows_sku        = "2019-Datacenter"
   ami                = "ami-07b70ee6215b30557"
   instance_type      = "t2.medium"
@@ -44,7 +44,7 @@
 }
 "srv03" = {
   name               = "srv03"
-  domain             = "vortexindustries.local"
+  domain             = "vertexcorp.local"
   windows_sku        = "2016-Datacenter"
   ami                = "ami-07b70ee6215b30557"
   instance_type      = "t2.medium"

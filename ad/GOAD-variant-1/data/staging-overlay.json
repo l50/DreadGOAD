@@ -2,13 +2,18 @@
   "lab": {
     "domains": {
       "vertexcorp.local": {
-        "acls": {
-          "GenericWrite_timothy_justin": null
-        }
+        "domain_password": "-cwuyGW494yZnC_M8wLN"
+      },
+      "cloud.sigmatech.local": {
+        "domain_password": "moydNed_wEKuP8KN6rUx"
+      },
+      "sigmatech.local": {
+        "domain_password": "ykRXQ@rWNV4znesz-h!c"
       }
     },
     "hosts": {
       "dc01": {
+        "local_admin_password": "ykRXQ@rWNV4znesz-h!c",
         "vulns": [
           "disable_firewall",
           "adcs_esc10_case1",
@@ -16,6 +21,7 @@
         ]
       },
       "dc02": {
+        "local_admin_password": "moydNed_wEKuP8KN6rUx",
         "scripts": [
           "asrep_roasting.ps1",
           "constrained_delegation_use_any.ps1",
@@ -34,22 +40,11 @@
           "files",
           "enable_llmnr",
           "enable_nbt_ns",
-          "shares",
           "anonymous_enum"
-        ],
-        "vulns_vars": {
-          "shares": {
-            "thewall": {
-              "path": "C:\\thewall",
-              "list": "yes",
-              "full": "CLOUD\\AdministrationSquad",
-              "change": "CLOUD\\anthony.green,CLOUD\\carol.peterson",
-              "read": "Users"
-            }
-          }
-        }
+        ]
       },
       "dc03": {
+        "local_admin_password": "-cwuyGW494yZnC_M8wLN",
         "vulns": [
           "ntlmdowngrade",
           "disable_firewall",
@@ -59,18 +54,10 @@
         ]
       },
       "srv02": {
-        "vulns": [
-          "directory",
-          "disable_firewall",
-          "openshares",
-          "files",
-          "permissions"
-        ],
-        "vulns_vars": {
-          "shares": null
-        }
+        "local_admin_password": "moydNed_wEKuP8KN6rUx"
       },
       "srv03": {
+        "local_admin_password": "-cwuyGW494yZnC_M8wLN",
         "vulns": [
           "openshares",
           "disable_firewall",

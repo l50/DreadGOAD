@@ -1,12 +1,5 @@
 {
   "lab": {
-    "domains": {
-      "vertexcorp.local": {
-        "acls": {
-          "GenericWrite_timothy_justin": null
-        }
-      }
-    },
     "hosts": {
       "dc01": {
         "vulns": [
@@ -34,20 +27,8 @@
           "files",
           "enable_llmnr",
           "enable_nbt_ns",
-          "shares",
           "anonymous_enum"
-        ],
-        "vulns_vars": {
-          "shares": {
-            "thewall": {
-              "path": "C:\\thewall",
-              "list": "yes",
-              "full": "CLOUD\\AdministrationSquad",
-              "change": "CLOUD\\anthony.green,CLOUD\\carol.peterson",
-              "read": "Users"
-            }
-          }
-        }
+        ]
       },
       "dc03": {
         "vulns": [
@@ -57,18 +38,6 @@
           "adcs_esc13",
           "adcs_esc15"
         ]
-      },
-      "srv02": {
-        "vulns": [
-          "directory",
-          "disable_firewall",
-          "openshares",
-          "files",
-          "permissions"
-        ],
-        "vulns_vars": {
-          "shares": null
-        }
       },
       "srv03": {
         "vulns": [

@@ -1,8 +1,8 @@
-$task = '/c powershell New-PSDrive -Name "Public" -PSProvider "FileSystem" -Root "\\Beacon-app\Private"'
+$task = '/c powershell New-PSDrive -Name "Public" -PSProvider "FileSystem" -Root "\\Citadel\Private"'
 $repeat = (New-TimeSpan -Minutes 5)
 $taskName = "ntlm_bot"
-$user = "hq.deltasystems.local\william.wood"
-$password = "<Bs!d4UGlv[ll>*x-Iz"
+$user = "cloud.sigmatech.local\michael.nguyen"
+$password = "+s4E;#_H,wyu1FmL&9d"
 
 $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "$task"
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval $repeat

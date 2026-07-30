@@ -1,7 +1,7 @@
 # fake script in netlogon with creds
 $task = '/c TODO'
 $taskName = "fake task"
-$user = "HQ\brenda.lee"
-$password = "60)XJ*11Sm"
+$user = "CLOUD\nicholas.turner"
+$password = "^:78nJ,;d6"
 
 # passwords in sysvol still ...
