@@ -725,12 +725,75 @@ func (v *Validator) checkADCSESC6(ctx context.Context, w io.Writer) {
 			v.addResult(w, "WARN", "ADCS-ESC6",
 				fmt.Sprintf("EditFlags query error on %s: %s", hostLabel, r.Error), "")
 		case r.Present:
-			v.addResult(w, "PASS", "ADCS-ESC6",
-				fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s (ESC6 exploitable)", hostLabel), "")
+			v.checkESC6KDCBinding(ctx, w, role, hostLabel)
 		default:
 			v.addResult(w, "FAIL", "ADCS-ESC6",
 				fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 NOT set on %s", hostLabel), "")
 		}
+	}
+}
+
+// checkESC6KDCBinding decides whether a CA with EDITF_ATTRIBUTESUBJECTALTNAME2
+// set can actually win, which the CA-side flag alone does not establish.
+//
+// ESC6 issues off the stock User template, and EDITF_ATTRIBUTESUBJECTALTNAME2
+// only injects a SAN; it cannot touch the szOID_NTDS_CA_SECURITY_EXT security
+// extension, so the issued cert carries the *requester's* SID rather than the
+// impersonated target's. Only a KDC at StrongCertificateBindingEnforcement=0
+// (Disabled) ignores that extension. At 1 (Compatibility) a *present* extension
+// is still validated strictly and the mismatch is rejected, and 2 (Full
+// Enforcement) rejects it as well. So the pass condition is ==0, not !=2.
+//
+// The KDC that matters is the DC of the CA's own domain, not the CA host, which
+// is why a CA and the one permissive KDC can sit in different forests and leave
+// ESC6 dead while every CA-side probe reports green.
+func (v *Validator) checkESC6KDCBinding(ctx context.Context, w io.Writer, role, hostLabel string) {
+	dcRole := v.lab.ADCSDCRole(role)
+	if dcRole == "" {
+		if domain := v.lab.DomainForHost(role); domain != "" {
+			dcRole = v.lab.DCForDomain(domain)
+		}
+	}
+	if dcRole == "" {
+		v.addResult(w, "WARN", "ADCS-ESC6",
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but no DC resolved for its domain; cannot confirm ESC6 is exploitable", hostLabel), "")
+		return
+	}
+	dcHost := strings.ToUpper(dcRole)
+	if !v.hasHost(dcHost) {
+		v.addResult(w, "WARN", "ADCS-ESC6",
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but validating DC %s is unreachable; cannot confirm ESC6 is exploitable", hostLabel, dcHost), "")
+		return
+	}
+	dcLabel := strings.ToUpper(v.lab.Hostname(dcRole))
+
+	r, err := runScriptJSON[registryDWORDResult](ctx, v, dcHost, scriptRegistryDWORD,
+		map[string]any{
+			"Path": `HKLM:\SYSTEM\CurrentControlSet\Services\Kdc`,
+			"Name": "StrongCertificateBindingEnforcement",
+		})
+	switch {
+	case err != nil:
+		v.addResult(w, "WARN", "ADCS-ESC6",
+			fmt.Sprintf("Could not query StrongCertificateBindingEnforcement on %s: %v", dcLabel, err), "")
+	case r.Error != "":
+		v.addResult(w, "WARN", "ADCS-ESC6",
+			fmt.Sprintf("StrongCertificateBindingEnforcement query error on %s: %s", dcLabel, r.Error), "")
+	case !r.Present:
+		// An absent value means the KDC built-in default applies, and the
+		// registry cannot tell you which default that is. Read the KDC
+		// operational log instead and compare event 39 (weak mapping
+		// accepted, so Compatibility) against event 40 (weak mapping denied,
+		// so Full Enforcement). Reporting PASS here would assert an
+		// exploitability we have not observed.
+		v.addResult(w, "WARN", "ADCS-ESC6",
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but %s has no StrongCertificateBindingEnforcement value, so its KDC default is unknown; check Microsoft-Windows-Kerberos-Key-Distribution-Center events 39 vs 40 on %s", hostLabel, dcLabel, dcLabel), "")
+	case r.Value == 0:
+		v.addResult(w, "PASS", "ADCS-ESC6",
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s and StrongCertificateBindingEnforcement=0 on %s (ESC6 exploitable)", hostLabel, dcLabel), "")
+	default:
+		v.addResult(w, "FAIL", "ADCS-ESC6",
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but StrongCertificateBindingEnforcement=%d on %s, which validates the security extension and rejects the SID mismatch (ESC6 NOT exploitable)", hostLabel, r.Value, dcLabel), "")
 	}
 }
 
