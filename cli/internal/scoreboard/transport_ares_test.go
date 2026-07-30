@@ -306,6 +306,13 @@ func TestDriftCategoriesCoverAresTokenCategory(t *testing.T) {
 		"gmsa_password_read":       "gmsa_svc",
 		"laps_password_read":       "laps_sql01",
 		"rbcd":                     "rbcd_dc01",
+
+		// First-class categories as of ares-cli PR #366. nopac is creditable
+		// via the prefix table; printnightmare and zerologon are creditable by
+		// nobody and must be exempt, or they warn on every poll.
+		"nopac":          "nopac_192_168_58_240",
+		"printnightmare": "printnightmare_192_168_58_10",
+		"zerologon":      "zerologon_192_168_58_240",
 	}
 
 	for category, vulnID := range aresCategories {
