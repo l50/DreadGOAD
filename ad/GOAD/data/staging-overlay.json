@@ -2,12 +2,7 @@
   "lab": {
     "domains": {
       "essos.local": {
-        "domain_password": "-cwuyGW494yZnC_M8wLN",
-        "groups": {
-          "universal": {
-            "greatmaster": null
-          }
-        }
+        "domain_password": "-cwuyGW494yZnC_M8wLN"
       },
       "north.sevenkingdoms.local": {
         "domain_password": "moydNed_wEKuP8KN6rUx"
@@ -50,11 +45,6 @@
       },
       "dc03": {
         "local_admin_password": "-cwuyGW494yZnC_M8wLN",
-        "local_groups": {
-          "Administrators": [
-            "essos\\daenerys.targaryen"
-          ]
-        },
         "vulns": [
           "ntlmdowngrade",
           "disable_firewall",
