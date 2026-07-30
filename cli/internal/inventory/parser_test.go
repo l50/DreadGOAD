@@ -47,6 +47,18 @@ func parseTestInventory(t *testing.T) *Inventory {
 	return inv
 }
 
+// mustHost returns the named host, failing the test if it is absent. Callers
+// get a value they can dereference directly, which keeps the
+// nil-check-then-dereference pattern out of the tests themselves.
+func mustHost(t *testing.T, inv *Inventory, name string) *Host {
+	t.Helper()
+	h, ok := inv.Hosts[name]
+	if !ok || h == nil {
+		t.Fatalf("host %q not found in inventory", name)
+	}
+	return h
+}
+
 func TestParse_HostCount(t *testing.T) {
 	inv := parseTestInventory(t)
 	if len(inv.Hosts) != 3 {
@@ -56,10 +68,7 @@ func TestParse_HostCount(t *testing.T) {
 
 func TestParse_HostAttributes(t *testing.T) {
 	inv := parseTestInventory(t)
-	dc01 := inv.Hosts["DC01"]
-	if dc01 == nil {
-		t.Fatal("DC01 not found")
-	}
+	dc01 := mustHost(t, inv, "DC01")
 	if dc01.InstanceID != "i-0e428dfc02f5007dd" {
 		t.Errorf("InstanceID = %q, want %q", dc01.InstanceID, "i-0e428dfc02f5007dd")
 	}
@@ -96,10 +105,7 @@ func TestParse_Groups(t *testing.T) {
 
 func TestParse_GroupMembership(t *testing.T) {
 	inv := parseTestInventory(t)
-	dc02 := inv.Hosts["DC02"]
-	if dc02 == nil {
-		t.Fatal("DC02 not found")
-	}
+	dc02 := mustHost(t, inv, "DC02")
 	wantGroups := map[string]bool{"dc": false, "north": false}
 	for _, g := range dc02.Groups {
 		if _, ok := wantGroups[g]; ok {
@@ -201,16 +207,17 @@ func TestHostByName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := inv.HostByName(tt.query)
-			if tt.want == "" {
+			// A single switch keeps the "want nil" and "want a host" cases
+			// mutually exclusive, so the dereference below is only reachable
+			// once got is known to be non-nil.
+			switch {
+			case tt.want == "":
 				if got != nil {
 					t.Errorf("HostByName(%q) = %v, want nil", tt.query, got)
 				}
-				return
-			}
-			if got == nil {
-				t.Fatalf("HostByName(%q) = nil, want %q", tt.query, tt.want)
-			}
-			if got.Name != tt.want {
+			case got == nil:
+				t.Errorf("HostByName(%q) = nil, want %q", tt.query, tt.want)
+			case got.Name != tt.want:
 				t.Errorf("HostByName(%q).Name = %q, want %q", tt.query, got.Name, tt.want)
 			}
 		})

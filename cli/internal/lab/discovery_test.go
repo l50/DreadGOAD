@@ -52,6 +52,20 @@ func buildFakeProject(t *testing.T) string {
 	return root
 }
 
+// mustLab returns the named lab, failing the test if it is absent. Callers get
+// a value they can dereference directly, which keeps the
+// nil-check-then-dereference pattern out of the tests themselves.
+func mustLab(t *testing.T, labs []Lab, name string) *Lab {
+	t.Helper()
+	for i := range labs {
+		if labs[i].Name == name {
+			return &labs[i]
+		}
+	}
+	t.Fatalf("lab %q not found in %d discovered labs", name, len(labs))
+	return nil // unreachable: t.Fatalf ends the test
+}
+
 func TestDiscoverLabs_Basic(t *testing.T) {
 	root := buildFakeProject(t)
 	labs, err := DiscoverLabs(root)
@@ -89,15 +103,7 @@ func TestDiscoverLabs_Providers(t *testing.T) {
 		t.Fatalf("DiscoverLabs: %v", err)
 	}
 
-	var goad *Lab
-	for i := range labs {
-		if labs[i].Name == "GOAD" {
-			goad = &labs[i]
-		}
-	}
-	if goad == nil {
-		t.Fatal("GOAD lab not found")
-	}
+	goad := mustLab(t, labs, "GOAD")
 	if len(goad.Providers) != 2 {
 		t.Errorf("expected 2 providers, got %d: %v", len(goad.Providers), goad.Providers)
 	}
@@ -110,15 +116,7 @@ func TestDiscoverLabs_Hosts(t *testing.T) {
 		t.Fatalf("DiscoverLabs: %v", err)
 	}
 
-	var goad *Lab
-	for i := range labs {
-		if labs[i].Name == "GOAD" {
-			goad = &labs[i]
-		}
-	}
-	if goad == nil {
-		t.Fatal("GOAD lab not found")
-	}
+	goad := mustLab(t, labs, "GOAD")
 	if len(goad.Hosts) != 2 {
 		t.Errorf("expected 2 hosts, got %d: %v", len(goad.Hosts), goad.Hosts)
 	}
