@@ -218,11 +218,29 @@ func TestDetectTokenCoverageDrift(t *testing.T) {
 			want:      nil,
 		},
 		{
-			// nopac/printnightmare/zerologon all land in ares's catch-all, so
-			// the bucket says nothing about our mapping either way.
+			// A mix of ids we score and ids we have no objective for, so the
+			// bucket says nothing about our mapping either way.
 			name:      "other bucket is exempt",
 			coverage:  cov("other", 5),
 			exploited: nil,
+			want:      nil,
+		},
+		{
+			// l50/ares#366 promotes these out of "other" into their own
+			// categories. We deliberately never credit them (the ares evidence
+			// gate fires on attempt markers), so without the exemption they
+			// would warn on every poll once that lands.
+			name:      "deliberately uncredited cve categories are exempt",
+			coverage:  cov("printnightmare", 2, "zerologon", 1),
+			exploited: nil,
+			want:      nil,
+		},
+		{
+			// Same #366 change, opposite outcome: nopac leaves "other" too,
+			// but we do map it to a real objective, so it must credit.
+			name:      "nopac credits once it leaves the other bucket",
+			coverage:  cov("nopac", 1),
+			exploited: []string{"nopac_192_168_58_240"},
 			want:      nil,
 		},
 		{
@@ -306,6 +324,11 @@ func TestDriftCategoriesCoverAresTokenCategory(t *testing.T) {
 		"gmsa_password_read":       "gmsa_svc",
 		"laps_password_read":       "laps_sql01",
 		"rbcd":                     "rbcd_dc01",
+		// Added by l50/ares#366, which promotes these three out of "other".
+		// nopac credits via the prefix table; the other two are exempt.
+		"nopac":          "nopac_192_168_58_240",
+		"printnightmare": "printnightmare_192_168_58_10",
+		"zerologon":      "zerologon_192_168_58_240",
 	}
 
 	for category, vulnID := range aresCategories {

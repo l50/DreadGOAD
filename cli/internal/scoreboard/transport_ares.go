@@ -158,16 +158,23 @@ func (t *AresTransport) Drift() []string {
 // driftExemptCategories are ares categories that are expected to produce no
 // direct technique credit, so their presence is not evidence of a mapping bug.
 //
-//   - "other" is ares's catch-all. Techniques DreadGOAD scores but ares has no
-//     token_category case for (nopac) land here alongside ones DreadGOAD
-//     deliberately refuses to credit (printnightmare, zerologon), so the bucket
-//     is not actionable either way.
+//   - "other" is ares's catch-all, a mix of ids DreadGOAD scores and ids it
+//     has no objective for, so the bucket is not actionable either way.
+//   - "printnightmare" and "zerologon" are deliberately never credited:
+//     ares's evidence gate fires on markers that precede success
+//     (printnightmare accepts "Stub loaded" / "[+] Triggering"; zerologon only
+//     ever runs the nxc check module, never the reset), so a credit there
+//     would score an attempt as an exploit. ares categorized both as "other"
+//     until l50/ares#366 gave them their own categories; without an explicit
+//     exemption they would warn on every poll once that lands.
 //   - "golden_ticket" is flat in ares but per-domain in the answer key
 //     (golden_ticket-<domain>). That credit comes from domain_compromise[]
 //     instead, so a flat category with no matching credit is expected.
 var driftExemptCategories = map[string]bool{
-	"other":         true,
-	"golden_ticket": true,
+	"other":          true,
+	"golden_ticket":  true,
+	"printnightmare": true,
+	"zerologon":      true,
 }
 
 // driftCategoryAliases translates ares category names that differ from the
