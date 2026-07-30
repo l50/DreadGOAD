@@ -63,8 +63,8 @@ func TestAresCategoryToTechniqueID(t *testing.T) {
 		{"ares normalises its own alias", "gpo_abuse", "gpo_abuse"},
 		{"esc8 credits", "adcs_esc8", "adcs_esc8"},
 		{"long esc form is distinct", "adcs_esc10_case1", "adcs_esc10_case1"},
-		{"nopac credits after ares #366", "nopac", "nopac"},
-		{"printnightmare credits after ares #367", "printnightmare", "printnightmare"},
+		{"nopac credits after l50/ares#366", "nopac", "nopac"},
+		{"printnightmare credits after l50/ares#367", "printnightmare", "printnightmare"},
 
 		// The one name that differs between the two vocabularies.
 		{"forest_trust aliases to cross_forest_trust", "forest_trust", "cross_forest_trust"},
@@ -274,7 +274,7 @@ func TestWriteTokenCoverageEntries(t *testing.T) {
 			absent: []string{"tech:zerologon", "tech:golden_ticket", "tech:other"},
 		},
 		{
-			// Refused alongside zerologon until ares-cli #367 rebuilt its gate
+			// Refused alongside zerologon until l50/ares#367 rebuilt its gate
 			// on a marker the PoC actually prints.
 			name: "printnightmare credits after ares gate fix",
 			coverage: map[string]aresTokenBucket{

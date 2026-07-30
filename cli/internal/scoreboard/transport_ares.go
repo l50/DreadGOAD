@@ -62,9 +62,15 @@ type aresLoot struct {
 }
 
 // aresTokenBucket is one entry in the ares loot JSON's `token_coverage` map,
-// keyed by ares's own scoreboard-category name. Exploited counts only proven
-// techniques as of ares-cli #366, which made it the technique credit source
-// (see writeTokenCoverageEntries).
+// keyed by ares's own scoreboard-category name.
+//
+// Exploited counts only proven techniques as of l50/ares#366, which is what
+// makes it usable as the technique credit source (see writeTokenCoverageEntries).
+// That fix is fork-only: it taught `build_token_coverage_json` to subtract the
+// superseded set and `state/reader.rs` to load `:superseded` alongside
+// `:exploited`. dreadnode/ares has neither, and no KEY_SUPERSEDED at all, so
+// against a stock build these counts include back-credited techniques ares
+// never walked and this transport will over-credit.
 type aresTokenBucket struct {
 	Discovered int    `json:"discovered"`
 	Exploited  int    `json:"exploited"`
@@ -213,16 +219,23 @@ var creditableCategories = map[string]string{
 //     which carries the domain the flat category drops.
 //   - "zerologon" is uncreditable by design: ares only ever runs the nxc
 //     zerologon check module, never the password reset, so the category counts
-//     detections and crediting it would score a scan as an exploit. ares-cli
-//     #366 promoted it out of "other", so without an explicit refusal it would
-//     start crediting scans.
+//     detections and crediting it would score a scan as an exploit. l50/ares#366
+//     promoted it out of "other", so without an explicit refusal it would start
+//     crediting scans.
 //
-// "printnightmare" was refused here on the same grounds until ares-cli #367.
+// "printnightmare" was refused here on the same grounds until l50/ares#367.
 // The rationale was wrong about the mechanism: its gate matched five markers
 // cube0x0/CVE-2021-1675 never prints, so it could not fire at all and the
 // technique scored zero rather than over-crediting. #367 rebuilt the gate on a
 // single "exploit completed" match taken from the PoC's real output, so the
 // category now means what it says and is credited like any other.
+//
+// The promotion itself is fork-only. l50/ares#366 lifted printnightmare,
+// zerologon and nopac out of "other" into categories of their own; dreadnode/ares
+// has not, and still asserts token_category("nopac_…") == "other". Against a
+// stock build all three collapse back: zerologon's refusal is merely redundant
+// (it lands in "other", refused anyway), but nopac and printnightmare silently
+// stop crediting. See aresTokenBucket for the matching caveat on exploited counts.
 var uncreditableCategories = map[string]bool{
 	"other":         true,
 	"golden_ticket": true,
