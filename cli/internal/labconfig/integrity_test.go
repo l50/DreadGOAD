@@ -166,12 +166,23 @@ func TestLabConfigIntegrity(t *testing.T) {
 	for _, dataDir := range labDataDirs(t, root) {
 		lab := filepath.Base(filepath.Dir(dataDir))
 		t.Run(lab, func(t *testing.T) {
+			base, err := os.ReadFile(filepath.Join(dataDir, "config.json"))
+			if err != nil {
+				t.Fatalf("read base config: %v", err)
+			}
 			for env, merged := range mergedVariants(t, dataDir) {
 				t.Run(env, func(t *testing.T) {
 					findings, err := CheckIntegrity(merged, opts)
 					if err != nil {
 						t.Fatalf("CheckIntegrity: %v", err)
 					}
+					// Drops are only meaningful against the base, so this is a
+					// no-op for the base pseudo-env and needs no special case.
+					drops, err := CheckOverlayDrops(base, merged)
+					if err != nil {
+						t.Fatalf("CheckOverlayDrops: %v", err)
+					}
+					findings = append(findings, drops...)
 					for _, f := range findings {
 						key := lab + "|" + env + "|" + f.String()
 						if baseline[key] {
@@ -256,6 +267,64 @@ func TestCheckIntegrityCatchesOverlayRegressions(t *testing.T) {
 			t.Errorf("no finding matched path=%q ref=%q msg~=%q; got %v",
 				tc.wantPath, tc.wantRef, tc.wantInMsg, findings)
 		})
+	}
+}
+
+// TestCheckOverlayDropsCatchesSilentRemoval pins the defect that shipped on
+// 2026-07-30: adcs_esc10_case1 was added to dc03 in config.json, but the dev,
+// staging and test overlays each redeclared dc03.vulns without it, so the role
+// never ran and ESC6/ESC9 stayed unexploitable in exactly those environments.
+//
+// The merged document is internally consistent in that state, which is why
+// CheckIntegrity reports nothing and this check has to exist separately.
+func TestCheckOverlayDropsCatchesSilentRemoval(t *testing.T) {
+	root := repoRoot(t)
+	base, err := os.ReadFile(filepath.Join(root, "ad", "GOAD", "data", "config.json"))
+	if err != nil {
+		t.Fatalf("read GOAD config: %v", err)
+	}
+
+	// Redeclare dc03.vulns without adcs_esc10_case1, exactly as the overlays did.
+	patch := `{"lab":{"hosts":{"dc03":{"vulns":["ntlmdowngrade","disable_firewall","adcs_esc7","adcs_esc13","adcs_esc15"]}}}}`
+	merged, err := jsonmerge.MergePatchBytes(base, []byte(patch))
+	if err != nil {
+		t.Fatalf("merge patch: %v", err)
+	}
+
+	if findings, err := CheckIntegrity(merged, testOptions(t, root)); err != nil {
+		t.Fatalf("CheckIntegrity: %v", err)
+	} else if len(findings) > 0 {
+		t.Fatalf("CheckIntegrity unexpectedly reports the drop, so this test no longer\n"+
+			"proves CheckOverlayDrops is load-bearing; got %v", findings)
+	}
+
+	drops, err := CheckOverlayDrops(base, merged)
+	if err != nil {
+		t.Fatalf("CheckOverlayDrops: %v", err)
+	}
+	for _, f := range drops {
+		if f.Path == `hosts["dc03"].vulns` && f.Ref == "adcs_esc10_case1" {
+			return
+		}
+	}
+	t.Errorf(`no finding for hosts["dc03"].vulns ref=adcs_esc10_case1; got %v`, drops)
+}
+
+// TestCheckOverlayDropsIgnoresDeletedHost keeps the check quiet about removals
+// that are already legible in the overlay: a host deleted outright with a null
+// is an explicit choice, not a silent loss of capability.
+func TestCheckOverlayDropsIgnoresDeletedHost(t *testing.T) {
+	base := []byte(`{"lab":{"hosts":{"dc03":{"vulns":["adcs_esc10_case1"]}}}}`)
+	merged, err := jsonmerge.MergePatchBytes(base, []byte(`{"lab":{"hosts":{"dc03":null}}}`))
+	if err != nil {
+		t.Fatalf("merge patch: %v", err)
+	}
+	drops, err := CheckOverlayDrops(base, merged)
+	if err != nil {
+		t.Fatalf("CheckOverlayDrops: %v", err)
+	}
+	if len(drops) != 0 {
+		t.Errorf("deleting a host should report nothing; got %v", drops)
 	}
 }
 

@@ -116,6 +116,92 @@ func CheckIntegrity(merged []byte, opts Options) ([]Finding, error) {
 	return out, nil
 }
 
+// overlayDropKeys names the per-host arrays whose loss silently removes lab
+// capability. Each is provisioned by looping over the array, so an entry the
+// overlay drops is never applied to the host.
+var overlayDropKeys = []struct {
+	name string
+	get  func(host) []string
+}{
+	{"vulns", func(h host) []string { return h.Vulns }},
+	{"scripts", func(h host) []string { return h.Scripts }},
+	{"vulns_adcs_templates", func(h host) []string { return h.VulnsADCSTemplates }},
+}
+
+// CheckOverlayDrops reports capability the base config grants a host that the
+// merged, post-overlay config does not.
+//
+// CheckIntegrity cannot see this class, by construction. Under RFC 7386 an
+// array in an overlay replaces its base counterpart wholesale rather than
+// merging into it, so an overlay that redeclares `vulns` without one of the
+// base's entries yields a document that is internally consistent and silently
+// smaller. Nothing dangles, so a referential check reports nothing, and
+// vulnerabilities.yml simply never includes the absent role: the play recap
+// reads ok=N failed=0 and the lab is quietly wrong in that environment alone.
+//
+// This shipped. Adding adcs_esc10_case1 to dc03 in config.json left the dev,
+// staging and test overlays redeclaring dc03.vulns without it, so ESC6 and
+// ESC9 stayed unexploitable in all three, while prod, which carries no dc03
+// override and therefore inherited the base, was correct.
+//
+// Pass the same base and merged pair the provisioner resolves. A host the
+// overlay deletes outright with an explicit null is not reported, since that
+// removal is already legible in the overlay.
+func CheckOverlayDrops(base, merged []byte) ([]Finding, error) {
+	baseHosts, err := hostsOf(base)
+	if err != nil {
+		return nil, fmt.Errorf("parse base lab config: %w", err)
+	}
+	mergedHosts, err := hostsOf(merged)
+	if err != nil {
+		return nil, fmt.Errorf("parse merged lab config: %w", err)
+	}
+
+	var out []Finding
+	for id, bh := range baseHosts {
+		mh, ok := mergedHosts[id]
+		if !ok {
+			continue
+		}
+		for _, key := range overlayDropKeys {
+			kept := map[string]bool{}
+			for _, v := range key.get(mh) {
+				kept[v] = true
+			}
+			for _, v := range key.get(bh) {
+				if !kept[v] {
+					out = append(out, Finding{
+						Path: fmt.Sprintf("hosts[%q].%s", id, key.name),
+						Ref:  v,
+						Msg:  "overlay drops an entry the base config declares, so it is never provisioned in this environment",
+					})
+				}
+			}
+		}
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Ref < out[j].Ref
+	})
+	return out, nil
+}
+
+// hostsOf decodes just the host table from a lab config document.
+func hostsOf(doc []byte) (map[string]host, error) {
+	var parsed struct {
+		Lab struct {
+			Hosts map[string]host `json:"hosts"`
+		} `json:"lab"`
+	}
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		return nil, err
+	}
+	return parsed.Lab.Hosts, nil
+}
+
 type domain struct {
 	DC          string `json:"dc"`
 	NetbiosName string `json:"netbios_name"`
@@ -151,12 +237,14 @@ type gmsa struct {
 }
 
 type host struct {
-	Hostname    string              `json:"hostname"`
-	Domain      string              `json:"domain"`
-	LocalGroups map[string][]string `json:"local_groups"`
-	Vulns       []string            `json:"vulns"`
-	VulnsVars   map[string]any      `json:"vulns_vars"`
-	MSSQL       *struct {
+	Hostname           string              `json:"hostname"`
+	Domain             string              `json:"domain"`
+	LocalGroups        map[string][]string `json:"local_groups"`
+	Vulns              []string            `json:"vulns"`
+	Scripts            []string            `json:"scripts"`
+	VulnsADCSTemplates []string            `json:"vulns_adcs_templates"`
+	VulnsVars          map[string]any      `json:"vulns_vars"`
+	MSSQL              *struct {
 		Sysadmins      []string          `json:"sysadmins"`
 		ExecuteAsLogin map[string]string `json:"executeaslogin"`
 		ExecuteAsUser  map[string]struct {
