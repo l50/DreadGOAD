@@ -213,6 +213,16 @@ var preservedUsernames = map[string]bool{"sql_svc": true}
 // in unrelated contexts.
 const minShareNameLength = 5
 
+// shareAliases maps a share name to compound forms of it that appear elsewhere
+// in upstream GOAD. Share replacement is word-boundary matched so the JSON key
+// and the path (C:\thewall) move together without touching substrings, but that
+// same boundary means \bthewall\b cannot reach "thewallserver" in the archived
+// kerberoasting script. Each alias is rewritten to the new share name plus
+// whatever the alias appended, keeping the parallel form.
+var shareAliases = map[string][]string{
+	"thewall": {"thewallserver"},
+}
+
 // hostnameAliases maps canonical hostnames to known typos/aliases in upstream GOAD.
 var hostnameAliases = map[string][]string{
 	"braavos": {"Bravos"},
@@ -697,6 +707,15 @@ func (g *Generator) mapShares(config *LabConfig) {
 			newName := g.nameGen.GenerateShareName()
 			g.mappings.Shares[shareName] = newName
 			fmt.Printf("  %s -> %s\n", shareName, newName)
+
+			// Compound forms go to Misc for plain (non-boundary) replacement.
+			// They are longer than the bare share name, and the replacement
+			// list is sorted longest-first, so they match before it does.
+			for _, alias := range shareAliases[shareName] {
+				suffix := strings.TrimPrefix(alias, shareName)
+				g.mappings.Misc[alias] = newName + suffix
+				fmt.Printf("  %s -> %s (compound)\n", alias, newName+suffix)
+			}
 		}
 	}
 }

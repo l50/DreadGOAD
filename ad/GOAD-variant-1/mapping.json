@@ -111,7 +111,7 @@
     "_W1sper_$": "SGW7xb\u0026$h",
     "cersei": "ttimzd",
     "fr3edom": "1g16kx7",
-    "hodor": "kkzof",
+    "hodor": "patrick",
     "horse": "fdmzy",
     "iamthekingoftheworld": "ludexcyrpmgdaekcwrsw",
     "iknownothing": "sigpubdmehqv",
@@ -156,6 +156,9 @@
     "Westerlands": "Northern"
   },
   "acls": {},
+  "shares": {
+    "thewall": "records"
+  },
   "misc": {
     "Arya": "frank",
     "BRAAVOS": "AURORA2",
@@ -248,6 +251,7 @@
     "stark": "phillips",
     "targaryen": "wright",
     "tarly": "peterson",
+    "thewallserver": "recordsserver",
     "tyron": "raymond",
     "tywin": "catherine",
     "varys": "collins",
