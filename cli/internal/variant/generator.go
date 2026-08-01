@@ -189,11 +189,24 @@ type Generator struct {
 	mappings        Mappings
 	replacements    []replacement
 	userPasswordMap map[string]string // new_username -> new_password
-	serviceAccounts map[string]bool   // source usernames rewritten to svc_* form
-	serviceAcctNew  map[string]bool   // the generated svc_* names, for post-transform lookups
-	pwdInDescUsers  map[string]bool   // new_username -> has password in description
-	nameComponents  map[string]bool   // Misc keys that are firstname/surname components
+	preservedUsers  map[string]bool
+	pwdInDescUsers  map[string]bool // new_username -> has password in description
+	nameComponents  map[string]bool // Misc keys that are firstname/surname components
 }
+
+// preservedUsernames are accounts whose sAMAccountName must survive variant
+// generation verbatim.
+//
+// sql_svc is hardcoded across the ares attack tooling (ares-tools acl.rs and
+// credential_access/, ares-cli orchestrator automation, loot report filtering,
+// and entity publishing), so renaming it here silently breaks ares against
+// every variant lab. This is a deliberate, known tradeoff: the name is a tell
+// that appears in public GOAD walkthroughs, but the ares contract wins.
+//
+// Their firstname/surname are generic service words ("sql", "service") that
+// must never become global replacements either, or every unrelated mention of
+// SQL in the tree gets rewritten.
+var preservedUsernames = map[string]bool{"sql_svc": true}
 
 // minShareNameLength is the shortest share name the generator will rewrite.
 // Below it, names are generic words ("all", "hr") that appear across the tree
@@ -226,8 +239,7 @@ func NewGenerator(source, target, name string) *Generator {
 			Misc:      make(map[string]string),
 		},
 		userPasswordMap: make(map[string]string),
-		serviceAccounts: map[string]bool{"sql_svc": true},
-		serviceAcctNew:  make(map[string]bool),
+		preservedUsers:  preservedUsernames,
 		pwdInDescUsers:  make(map[string]bool),
 		nameComponents:  make(map[string]bool),
 	}
@@ -398,15 +410,10 @@ func (g *Generator) mapHosts(config *LabConfig) {
 func (g *Generator) mapUsers(config *LabConfig) {
 	for _, domain := range config.Lab.Domains {
 		for username, user := range domain.Users {
-			// Service accounts are renamed but never contribute name
-			// components. Their firstname/surname are generic service words
-			// ("sql", "service"); registering those as global replacements
-			// would rewrite every unrelated mention of SQL in the tree.
-			if g.serviceAccounts[username] {
-				newUsername := g.nameGen.GenerateServiceAccountName()
-				g.mappings.Users[username] = newUsername
-				g.serviceAcctNew[newUsername] = true
-				fmt.Printf("  %s -> %s (service account)\n", username, newUsername)
+			// See preservedUsernames: renaming these breaks ares.
+			if g.preservedUsers[username] {
+				g.mappings.Users[username] = username
+				fmt.Printf("  %s -> %s (preserved)\n", username, username)
 				continue
 			}
 
@@ -872,10 +879,11 @@ func (g *Generator) isNameComponent(old string) bool {
 func (g *Generator) fixUserFirstnameSurname(config *LabConfig) {
 	for _, domain := range config.Lab.Domains {
 		for username, user := range domain.Users {
-			// Keyed by the generated name: this runs on already-transformed
-			// content. Service account firstname/surname are generic
-			// ("sql"/"service") and carry no lab identity, so they stay as-is.
-			if g.serviceAcctNew[username] || user == nil {
+			// Preserved accounts keep their original sAMAccountName, so this
+			// lookup still matches on already-transformed content. The skip
+			// matters for the dotless branch below, which would otherwise
+			// rewrite sql_svc's firstname to "sql_svc".
+			if g.preservedUsers[username] || user == nil {
 				continue
 			}
 
@@ -1104,7 +1112,9 @@ var originalNames = []string{
 	"stannis",
 	// Groups, shares, and lore strings that no entity mapping covers
 	"dothraki", "dragonsfriends", "queenprotector", "greatmaster",
-	"thewall", "heartsbane", "sql_svc",
+	"thewall", "heartsbane",
+	// Deliberately absent: sql_svc. See preservedUsernames — it survives into
+	// variants on purpose, so listing it here would fail validation every run.
 }
 
 type violation struct {

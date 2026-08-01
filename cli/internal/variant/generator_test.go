@@ -230,41 +230,50 @@ func generateAndRead(t *testing.T, name string) (string, *LabConfig) {
 	return string(data), &cfg
 }
 
-// TestServiceAccountRenamed covers sql_svc, the account every public GOAD
-// walkthrough kerberoasts by name. It must be renamed, but to a service-shaped
-// name rather than firstname.lastname, and its generic "sql"/"service" fields
-// must survive: mapping those would rewrite every unrelated SQL reference.
-func TestServiceAccountRenamed(t *testing.T) {
+// TestServiceAccountPreserved pins sql_svc as preserved. The name is hardcoded
+// across the ares attack tooling, so renaming it breaks ares against every
+// variant lab. Its generic "sql"/"service" fields must also survive verbatim:
+// mapping those would rewrite every unrelated SQL reference in the tree.
+func TestServiceAccountPreserved(t *testing.T) {
 	content, cfg := generateAndRead(t, "test-svc")
 
-	if strings.Contains(content, "sql_svc") {
-		t.Error("sql_svc should be renamed, not preserved")
+	if !strings.Contains(content, "sql_svc") {
+		t.Error("sql_svc must be preserved; ares hardcodes it")
 	}
 
-	svcAccount := ""
 	for _, host := range cfg.Lab.Hosts {
-		if host.MSSQL != nil && host.MSSQL.SVCAccount != "" {
-			svcAccount = host.MSSQL.SVCAccount
+		if host.MSSQL != nil && host.MSSQL.SVCAccount != "sql_svc" {
+			t.Errorf("mssql svcaccount = %q, want sql_svc", host.MSSQL.SVCAccount)
 		}
-	}
-	if !strings.HasPrefix(svcAccount, "svc_") {
-		t.Fatalf("mssql svcaccount = %q, want a svc_ prefixed name", svcAccount)
 	}
 
 	found := false
 	for _, domain := range cfg.Lab.Domains {
-		user, ok := domain.Users[svcAccount]
+		user, ok := domain.Users["sql_svc"]
 		if !ok || user == nil {
 			continue
 		}
 		found = true
 		if user.Firstname != "sql" || user.Description != "sql service" {
-			t.Errorf("service account fields rewritten: firstname=%q description=%q",
+			t.Errorf("preserved account fields rewritten: firstname=%q description=%q",
 				user.Firstname, user.Description)
 		}
 	}
 	if !found {
-		t.Errorf("no user matching mssql svcaccount %q in transformed config", svcAccount)
+		t.Error("no sql_svc user in transformed config")
+	}
+}
+
+// TestPreservedUserNotInOriginalNames guards the interaction between the two
+// lists: anything preserved on purpose must not be in the validator's blocklist,
+// or every variant fails its own validation.
+func TestPreservedUserNotInOriginalNames(t *testing.T) {
+	for name := range preservedUsernames {
+		for _, banned := range originalNames {
+			if strings.EqualFold(name, banned) {
+				t.Errorf("%q is both preserved and in originalNames; validation will always fail", name)
+			}
+		}
 	}
 }
 
