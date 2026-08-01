@@ -1,5 +1,5 @@
 $identity = 'anthony.green'
-$spn = 'CIFS/thewall.cloud.sigmatech.local'
+$spn = 'CIFS/records.cloud.sigmatech.local'
 $delegateTo = @('CIFS/delta.cloud.sigmatech.local', 'CIFS/delta')
 
 # Re-adding a value a multi-valued attribute already holds is an LDAP constraint

@@ -208,11 +208,11 @@
             }
           },
           "shares": {
-            "thewall": {
+            "records": {
               "change": "CLOUD\\anthony.green,CLOUD\\carol.peterson",
               "full": "CLOUD\\AdministrationSquad",
               "list": "yes",
-              "path": "C:\\thewall",
+              "path": "C:\\records",
               "read": "Users"
             }
           }
@@ -358,7 +358,7 @@
             ],
             "path": "CN=Users,DC=Cloud,DC=sigmatech,DC=local",
             "spns": [
-              "HTTP/thewall.cloud.sigmatech.local"
+              "HTTP/records.cloud.sigmatech.local"
             ]
           },
           "carol.peterson": {
@@ -443,9 +443,9 @@
           "patrick": {
             "firstname": "patrick",
             "surname": "patrick",
-            "password": "kkzof",
+            "password": "patrick",
             "city": "Atlanta",
-            "description": "Brainless Giant",
+            "description": "Patrick",
             "groups": [
               "AdministrationSquad"
             ],

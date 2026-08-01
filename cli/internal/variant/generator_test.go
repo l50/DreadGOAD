@@ -627,3 +627,37 @@ func TestPasswordEqualToUsernamePreservesPairing(t *testing.T) {
 		}
 	}
 }
+
+// TestCompoundShareNameRewritten covers "thewallserver" in the archived
+// kerberoasting script. Share replacement is word-boundary matched, so the bare
+// share mapping cannot reach a compound form and it survived into variants.
+func TestCompoundShareNameRewritten(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	scriptPath := filepath.Join(sourceDir, "scripts", "kerberoasting.ps1")
+	if err := os.WriteFile(scriptPath,
+		[]byte(`Set-ADUser -Identity "jon.snow" -ServicePrincipalNames @{Add='HTTP/thewallserver'}`+"\n"),
+		0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator(sourceDir, targetDir, "test-compound")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+
+	out, err := os.ReadFile(filepath.Join(targetDir, "scripts", "kerberoasting.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "thewall") {
+		t.Errorf("compound share name survived: %s", out)
+	}
+
+	newShare := gen.mappings.Shares["thewall"]
+	if newShare == "" {
+		t.Fatal("thewall share was not mapped")
+	}
+	if !strings.Contains(string(out), newShare+"server") {
+		t.Errorf("got %q, want it to contain %q", out, newShare+"server")
+	}
+}

@@ -39,8 +39,8 @@
         ],
         "vulns_vars": {
           "shares": {
-            "thewall": {
-              "path": "C:\\thewall",
+            "records": {
+              "path": "C:\\records",
               "list": "yes",
               "full": "CLOUD\\AdministrationSquad",
               "change": "CLOUD\\anthony.green,CLOUD\\carol.peterson",
