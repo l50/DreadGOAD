@@ -25,6 +25,8 @@ type NameGenerator struct {
 	animals          []string
 	subdomainWords   []string
 	cityNames        []string
+	shareWords       []string
+	serviceWords     []string
 }
 
 // NewNameGenerator creates a new NameGenerator with default word lists.
@@ -116,6 +118,18 @@ func NewNameGenerator() *NameGenerator {
 			"Boston", "Chicago", "Dallas", "Denver", "Houston",
 			"Phoenix", "Seattle", "Portland", "Austin", "Atlanta",
 			"Miami", "Philadelphia", "San Diego", "San Francisco", "New York",
+		},
+		// Share and service words are deliberately >= 5 characters. Share names
+		// are replaced with plain word-boundary matching across the whole tree,
+		// so a short generic word like "all" or "hr" would corrupt unrelated text.
+		shareWords: []string{
+			"archive", "backups", "finance", "payroll", "records",
+			"transfer", "projects", "contracts", "invoices", "reports",
+			"scanner", "templates", "vendors", "budgets", "audits",
+		},
+		serviceWords: []string{
+			"backup", "report", "monitor", "deploy", "index",
+			"archive", "batch", "transfer", "collect", "schedule",
 		},
 	}
 }
@@ -218,6 +232,18 @@ func (ng *NameGenerator) GenerateHostname() string {
 // GenerateGMSAName generates a gMSA account name like "gmsaPhoenix".
 func (ng *NameGenerator) GenerateGMSAName() string {
 	return ng.ensureUnique("gmsa" + secureChoice(ng.animals))
+}
+
+// GenerateShareName generates a file share name like "contracts".
+func (ng *NameGenerator) GenerateShareName() string {
+	return ng.ensureUnique(secureChoice(ng.shareWords))
+}
+
+// GenerateServiceAccountName generates a service account name like "svc_backup".
+// Service accounts keep the underscore convention rather than the
+// firstname.lastname form so they still read as non-human accounts.
+func (ng *NameGenerator) GenerateServiceAccountName() string {
+	return ng.ensureUnique("svc_" + secureChoice(ng.serviceWords))
 }
 
 const (

@@ -90,6 +90,21 @@ func testConfig() *LabConfig {
 			Domain:             "essos.local",
 			LocalAdminPassword: "TestPass456!",
 		},
+		"srv02": {
+			Hostname:           "castelblack",
+			Type:               "server",
+			Domain:             "north.sevenkingdoms.local",
+			LocalAdminPassword: "TestPass789!",
+			MSSQL:              &MSSQLConfig{SAPassword: "SaPass1!", SVCAccount: "sql_svc"},
+			VulnsVars: map[string]any{
+				"shares": map[string]any{
+					// "thewall" is lore and must be renamed; "all" is a generic
+					// word that must be left alone.
+					"thewall": map[string]any{"path": `C:\thewall`, "read": "Users"},
+					"all":     map[string]any{"path": `C:\shares\all`, "read": "Users"},
+				},
+			},
+		},
 	}
 	config.Lab.Domains = map[string]*DomainConfig{
 		"sevenkingdoms.local": {
@@ -108,9 +123,18 @@ func testConfig() *LabConfig {
 					Description: "Samwell Tarly (Password : Heartsbane)",
 				},
 				"sql_svc": {
-					Firstname: "sql",
-					Surname:   "-",
-					Password:  "SqlSvcPass1!",
+					Firstname:   "sql",
+					Surname:     "-",
+					Password:    "SqlSvcPass1!",
+					Description: "sql service",
+				},
+				// Single-name account whose description is free-text lore
+				// containing no mapped entity.
+				"hodor": {
+					Firstname:   "hodor",
+					Surname:     "-",
+					Password:    "HodorPass1!",
+					Description: "Brainless Giant",
 				},
 			},
 			Groups: GroupsConfig{
@@ -169,10 +193,6 @@ func TestGeneratorEndToEnd(t *testing.T) {
 			t.Errorf("original name %q still found in transformed config", name)
 		}
 	}
-	if !strings.Contains(content, "sql_svc") {
-		t.Error("sql_svc should be preserved")
-	}
-
 	scriptData, err := os.ReadFile(filepath.Join(targetDir, "scripts", "test.ps1"))
 	if err != nil {
 		t.Fatal(err)
@@ -187,6 +207,81 @@ func TestGeneratorEndToEnd(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(targetDir, "README.md")); err != nil {
 		t.Fatal("README.md not created")
+	}
+}
+
+// generateAndRead runs the generator over the shared test source and returns the
+// transformed config both as raw text and parsed.
+func generateAndRead(t *testing.T, name string) (string, *LabConfig) {
+	t.Helper()
+	sourceDir, targetDir := setupTestSource(t)
+	gen := NewGenerator(sourceDir, targetDir, name)
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(targetDir, "data", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg LabConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("transformed config is not valid JSON: %v", err)
+	}
+	return string(data), &cfg
+}
+
+// TestServiceAccountRenamed covers sql_svc, the account every public GOAD
+// walkthrough kerberoasts by name. It must be renamed, but to a service-shaped
+// name rather than firstname.lastname, and its generic "sql"/"service" fields
+// must survive: mapping those would rewrite every unrelated SQL reference.
+func TestServiceAccountRenamed(t *testing.T) {
+	content, cfg := generateAndRead(t, "test-svc")
+
+	if strings.Contains(content, "sql_svc") {
+		t.Error("sql_svc should be renamed, not preserved")
+	}
+
+	svcAccount := ""
+	for _, host := range cfg.Lab.Hosts {
+		if host.MSSQL != nil && host.MSSQL.SVCAccount != "" {
+			svcAccount = host.MSSQL.SVCAccount
+		}
+	}
+	if !strings.HasPrefix(svcAccount, "svc_") {
+		t.Fatalf("mssql svcaccount = %q, want a svc_ prefixed name", svcAccount)
+	}
+
+	found := false
+	for _, domain := range cfg.Lab.Domains {
+		user, ok := domain.Users[svcAccount]
+		if !ok || user == nil {
+			continue
+		}
+		found = true
+		if user.Firstname != "sql" || user.Description != "sql service" {
+			t.Errorf("service account fields rewritten: firstname=%q description=%q",
+				user.Firstname, user.Description)
+		}
+	}
+	if !found {
+		t.Errorf("no user matching mssql svcaccount %q in transformed config", svcAccount)
+	}
+}
+
+// TestLoreStringsRewritten covers identity that no entity mapping reaches:
+// free-text descriptions on single-name accounts and SMB share names. Short
+// generic share names must be left alone.
+func TestLoreStringsRewritten(t *testing.T) {
+	content, _ := generateAndRead(t, "test-lore")
+
+	if strings.Contains(content, "Brainless Giant") {
+		t.Error("lore description 'Brainless Giant' survived into the variant")
+	}
+	if strings.Contains(content, "thewall") {
+		t.Error("share name 'thewall' survived into the variant")
+	}
+	if !strings.Contains(content, `C:\\shares\\all`) {
+		t.Error("generic share name 'all' should not have been rewritten")
 	}
 }
 
@@ -490,6 +585,36 @@ func TestFirstnameCollisionNoOverwrite(t *testing.T) {
 						domainName, username, user.Firstname, parts[0])
 				}
 			}
+		}
+	}
+}
+
+// TestPasswordEqualToUsernamePreservesPairing covers upstream GOAD's hodor
+// account, whose password is its own username. The literal is both a user and
+// a password mapping; before the collision was handled, the two equal-length
+// replacements raced and either broke the credential pairing or overwrote the
+// username with the generated password.
+func TestPasswordEqualToUsernamePreservesPairing(t *testing.T) {
+	for i := range 20 {
+		gen := NewGenerator("", "", "collision-test")
+		config := &LabConfig{}
+		config.Lab.Domains = map[string]*DomainConfig{
+			"north.sevenkingdoms.local": {
+				Users: map[string]*UserConfig{
+					"hodor": {Firstname: "hodor", Surname: "-", Password: "hodor"},
+				},
+			},
+		}
+		gen.generateMappings(config)
+
+		newUser := gen.mappings.Users["hodor"]
+		newPass := gen.mappings.Passwords["hodor"]
+		if newUser == "" {
+			t.Fatalf("run %d: username was not mapped", i)
+		}
+		if newPass != newUser {
+			t.Fatalf("run %d: password mapped to %q, want %q so the pairing survives",
+				i, newPass, newUser)
 		}
 	}
 }
