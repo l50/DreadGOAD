@@ -158,6 +158,7 @@ type Mappings struct {
 	Groups    map[string]string      `json:"groups"`
 	OUs       map[string]string      `json:"ous"`
 	ACLs      map[string]string      `json:"acls"`
+	Shares    map[string]string      `json:"shares"`
 	Misc      map[string]string      `json:"misc"`
 }
 
@@ -193,6 +194,25 @@ type Generator struct {
 	nameComponents  map[string]bool // Misc keys that are firstname/surname components
 }
 
+// preservedUsernames are accounts whose sAMAccountName must survive variant
+// generation verbatim.
+//
+// sql_svc is hardcoded across the ares attack tooling (ares-tools acl.rs and
+// credential_access/, ares-cli orchestrator automation, loot report filtering,
+// and entity publishing), so renaming it here silently breaks ares against
+// every variant lab. This is a deliberate, known tradeoff: the name is a tell
+// that appears in public GOAD walkthroughs, but the ares contract wins.
+//
+// Their firstname/surname are generic service words ("sql", "service") that
+// must never become global replacements either, or every unrelated mention of
+// SQL in the tree gets rewritten.
+var preservedUsernames = map[string]bool{"sql_svc": true}
+
+// minShareNameLength is the shortest share name the generator will rewrite.
+// Below it, names are generic words ("all", "hr") that appear across the tree
+// in unrelated contexts.
+const minShareNameLength = 5
+
 // hostnameAliases maps canonical hostnames to known typos/aliases in upstream GOAD.
 var hostnameAliases = map[string][]string{
 	"braavos": {"Bravos"},
@@ -215,10 +235,11 @@ func NewGenerator(source, target, name string) *Generator {
 			Groups:    make(map[string]string),
 			OUs:       make(map[string]string),
 			ACLs:      make(map[string]string),
+			Shares:    make(map[string]string),
 			Misc:      make(map[string]string),
 		},
 		userPasswordMap: make(map[string]string),
-		preservedUsers:  map[string]bool{"sql_svc": true},
+		preservedUsers:  preservedUsernames,
 		pwdInDescUsers:  make(map[string]bool),
 		nameComponents:  make(map[string]bool),
 	}
@@ -304,6 +325,9 @@ func (g *Generator) generateMappings(config *LabConfig) {
 	fmt.Println("\nMapping cities...")
 	g.mapCities(config)
 
+	fmt.Println("\nMapping shares...")
+	g.mapShares(config)
+
 	// Reconcile name-component Misc entries that conflict with Groups.
 	// Group names are explicit AD entities and take precedence over
 	// capitalized-surname convenience entries (e.g., "Targaryen" is both
@@ -386,6 +410,7 @@ func (g *Generator) mapHosts(config *LabConfig) {
 func (g *Generator) mapUsers(config *LabConfig) {
 	for _, domain := range config.Lab.Domains {
 		for username, user := range domain.Users {
+			// See preservedUsernames: renaming these breaks ares.
 			if g.preservedUsers[username] {
 				g.mappings.Users[username] = username
 				fmt.Printf("  %s -> %s (preserved)\n", username, username)
@@ -496,6 +521,19 @@ func (g *Generator) mapPasswords(config *LabConfig) {
 	collectHostPasswords(config.Lab.Hosts, passwords)
 
 	for pw := range passwords {
+		// Upstream GOAD gives hodor the password "hodor" — a deliberate
+		// password-equals-username weak credential. That literal would
+		// otherwise register two replacements of equal length (one from
+		// Users, one from Passwords) and sort.Slice is not stable, so which
+		// one won varied per run: either the credential pairing was lost or
+		// the username itself got overwritten with the generated password.
+		// Reusing the username's mapping is deterministic and keeps the
+		// vulnerability intact.
+		if newUser, ok := g.mappings.Users[pw]; ok {
+			g.mappings.Passwords[pw] = newUser
+			fmt.Printf("  %s... -> %s... (matches username, pairing preserved)\n", pw, newUser)
+			continue
+		}
 		newPW := g.nameGen.GeneratePassword(pw)
 		g.mappings.Passwords[pw] = newPW
 		truncOld := pw
@@ -632,6 +670,37 @@ func (g *Generator) mapCities(config *LabConfig) {
 	}
 }
 
+// mapShares renames SMB share names declared under a host's vulns_vars.shares.
+// The share name also appears inside its own filesystem path (share "thewall"
+// lives at C:\thewall), so a single word-boundary replacement covers both.
+//
+// Names shorter than minShareNameLength are left alone: they are generic words
+// like "all" or "hr" that occur throughout the tree in unrelated contexts, and
+// replacing them would corrupt far more than it anonymizes.
+func (g *Generator) mapShares(config *LabConfig) {
+	for _, host := range config.Lab.Hosts {
+		if host == nil {
+			continue
+		}
+		shares, ok := host.VulnsVars["shares"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for shareName := range shares {
+			if len(shareName) < minShareNameLength {
+				fmt.Printf("  %s (skipped: too generic to replace safely)\n", shareName)
+				continue
+			}
+			if _, done := g.mappings.Shares[shareName]; done {
+				continue
+			}
+			newName := g.nameGen.GenerateShareName()
+			g.mappings.Shares[shareName] = newName
+			fmt.Printf("  %s -> %s\n", shareName, newName)
+		}
+	}
+}
+
 // buildOrderedReplacements builds the ordered replacement list (longest first).
 func (g *Generator) buildOrderedReplacements() {
 	fmt.Println("\n=== Building Ordered Replacements ===")
@@ -648,6 +717,7 @@ func (g *Generator) buildOrderedReplacements() {
 	repls = appendMapReplacements(repls, g.mappings.OUs, nil)
 	repls = appendMapReplacements(repls, g.mappings.Passwords, nil)
 	repls = appendMapReplacements(repls, g.mappings.NetBIOS, nil)
+	repls = appendMapReplacements(repls, g.mappings.Shares, nil)
 	repls = appendMapReplacements(repls, g.mappings.Misc, withoutSuffix("$"))
 
 	// Tag name-component replacements for word-boundary matching.
@@ -657,6 +727,10 @@ func (g *Generator) buildOrderedReplacements() {
 	for i := range repls {
 		if _, isGroup := g.mappings.Groups[repls[i].Old]; isGroup {
 			repls[i].WordBoundary = false
+		} else if _, isShare := g.mappings.Shares[repls[i].Old]; isShare {
+			// Shares match at boundaries so the JSON key and the path
+			// (C:\thewall) both hit without touching substrings.
+			repls[i].WordBoundary = true
 		} else {
 			repls[i].WordBoundary = g.isNameComponent(repls[i].Old)
 		}
@@ -805,26 +879,38 @@ func (g *Generator) isNameComponent(old string) bool {
 func (g *Generator) fixUserFirstnameSurname(config *LabConfig) {
 	for _, domain := range config.Lab.Domains {
 		for username, user := range domain.Users {
+			// Preserved accounts keep their original sAMAccountName, so this
+			// lookup still matches on already-transformed content. The skip
+			// matters for the dotless branch below, which would otherwise
+			// rewrite sql_svc's firstname to "sql_svc".
 			if g.preservedUsers[username] || user == nil {
 				continue
 			}
+
+			var displayName string
 			if strings.Contains(username, ".") {
 				parts := strings.SplitN(username, ".", 2)
 				user.Firstname = parts[0]
 				if len(parts) > 1 {
 					user.Surname = parts[1]
 				}
-				if user.Description != "" {
-					displayName := capitalize(parts[0]) + " " + capitalize(parts[1])
-					if g.pwdInDescUsers[username] {
-						if pw, ok := g.userPasswordMap[username]; ok {
-							user.Description = displayName + " (Password : " + pw + ")"
-						} else {
-							user.Description = displayName
-						}
-					} else {
-						user.Description = displayName
-					}
+				displayName = capitalize(parts[0]) + " " + capitalize(parts[1])
+			} else {
+				// Single-name accounts keep the dotless form. Their descriptions
+				// are free-text lore in upstream GOAD ("Brainless Giant" for
+				// hodor) that contains no mapped entity, so text replacement
+				// never touches it. Rebuild it from the generated name instead.
+				user.Firstname = username
+				displayName = capitalize(username)
+			}
+
+			if user.Description == "" {
+				continue
+			}
+			user.Description = displayName
+			if g.pwdInDescUsers[username] {
+				if pw, ok := g.userPasswordMap[username]; ok {
+					user.Description = displayName + " (Password : " + pw + ")"
 				}
 			}
 		}
@@ -1008,13 +1094,27 @@ func (g *Generator) saveMappings() error {
 	return os.WriteFile(outPath, data, 0o644)
 }
 
+// originalNames are upstream GOAD identity strings that must not survive into a
+// variant. Every entry here must be absent from the NameGenerator word lists,
+// or the generator will randomly emit one and trip its own validation.
 var originalNames = []string{
-	"sevenkingdoms", "essos",
-	"kingslanding", "winterfell", "meereen", "castelblack", "braavos",
-	"stark", "lannister", "baratheon", "targaryen", "drogo", "snow",
-	"tywin", "jaime", "cersei", "tyron", "robert", "joffrey",
-	"arya", "eddard", "catelyn", "robb", "sansa", "brandon",
-	"daenerys", "viserys", "khal", "jorah", "mormont",
+	// Domains and hosts
+	"sevenkingdoms", "essos", "kingslanding", "winterfell", "meereen",
+	"castelblack", "braavos",
+	// Houses and surnames
+	"stark", "lannister", "lanister", "baratheon", "targaryen", "mormont",
+	"tarly", "baelish",
+	// Given names
+	"tywin", "jaime", "cersei", "tyron", "robert", "joffrey", "arya",
+	"eddard", "catelyn", "robb", "sansa", "brandon", "rickon", "daenerys",
+	"viserys", "khal", "drogo", "jorah", "snow", "hodor", "missandei",
+	"drogon", "samwell", "jeor", "petyer", "varys", "pycelle", "renly",
+	"stannis",
+	// Groups, shares, and lore strings that no entity mapping covers
+	"dothraki", "dragonsfriends", "queenprotector", "greatmaster",
+	"thewall", "heartsbane",
+	// Deliberately absent: sql_svc. See preservedUsernames — it survives into
+	// variants on purpose, so listing it here would fail validation every run.
 }
 
 type violation struct {
